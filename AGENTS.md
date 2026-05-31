@@ -13,6 +13,9 @@ Requirements
 - Use responsive layouts.
 - Create migrations for database changes.
 - Keep changes small and reviewable.
+- Never modify Supabase production data.
+- Generate SQL migration scripts but do not execute them.
+
 
 Current Features
 - User login
