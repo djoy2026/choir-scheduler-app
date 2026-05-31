@@ -1,0 +1,2010 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:table_calendar/table_calendar.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await dotenv.load(fileName: '.env');
+
+  await Supabase.initialize(
+    url: dotenv.env['SUPABASE_URL']!,
+    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+  );
+
+  runApp(const MyApp());
+}
+
+final supabase = Supabase.instance.client;
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Choir Scheduler',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      ),
+      debugShowCheckedModeBanner: false,
+      home: const AuthGate(),
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final session = supabase.auth.currentSession;
+    if (session != null) return const HomePage();
+    return const AuthPage();
+  }
+}
+
+class AuthPage extends StatefulWidget {
+  const AuthPage({super.key});
+
+  @override
+  State<AuthPage> createState() => _AuthPageState();
+}
+
+class _AuthPageState extends State<AuthPage> {
+  bool _showLogin = true;
+
+  void _toggleMode() {
+    setState(() {
+      _showLogin = !_showLogin;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _showLogin
+        ? LoginPage(onSwitchToSignUp: _toggleMode)
+        : SignUpPage(onSwitchToLogin: _toggleMode);
+  }
+}
+
+class LoginPage extends StatefulWidget {
+  final VoidCallback onSwitchToSignUp;
+
+  const LoginPage({super.key, required this.onSwitchToSignUp});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  String? _message;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _isLoading = true;
+      _message = null;
+    });
+
+    try {
+      await supabase.auth.signInWithPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+
+      if (!mounted) return;
+
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomePage()));
+    } on AuthException catch (e) {
+      setState(() {
+        _message = 'Login error: ${e.message}';
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Error: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  String? _emailValidator(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Email is required';
+    if (!value.contains('@') || !value.contains('.')) {
+      return 'Enter a valid email';
+    }
+    return null;
+  }
+
+  String? _passwordValidator(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Password is required';
+    if (value.trim().length < 6) {
+      return 'Password must be at least 6 characters';
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Login')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                const SizedBox(height: 16),
+                const Text(
+                  'Welcome to Choir Scheduler',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                TextFormField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: _emailValidator,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _passwordController,
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
+                  ),
+                  validator: _passwordValidator,
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _login,
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Login'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: widget.onSwitchToSignUp,
+                  child: const Text("Don't have an account? Sign up"),
+                ),
+                if (_message != null) ...[
+                  const SizedBox(height: 16),
+                  Text(_message!, textAlign: TextAlign.center),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SignUpPage extends StatefulWidget {
+  final VoidCallback onSwitchToLogin;
+
+  const SignUpPage({super.key, required this.onSwitchToLogin});
+
+  @override
+  State<SignUpPage> createState() => _SignUpPageState();
+}
+
+class _SignUpPageState extends State<SignUpPage> {
+  final _formKey = GlobalKey<FormState>();
+
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _passwordController = TextEditingController();
+
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  String? _message;
+
+  @override
+  void dispose() {
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _signUp() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _isLoading = true;
+      _message = null;
+    });
+
+    try {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+      final firstName = _firstNameController.text.trim();
+      final lastName = _lastNameController.text.trim();
+      final phone = _phoneController.text.trim();
+
+      final authResponse = await supabase.auth.signUp(
+        email: email,
+        password: password,
+      );
+
+      final user = authResponse.user;
+      if (user == null) {
+        throw Exception('User signup succeeded but no user was returned.');
+      }
+
+      await supabase.from('profiles').insert({
+        'id': user.id,
+        'first_name': firstName,
+        'last_name': lastName,
+        'email': email,
+        'phone': phone,
+      });
+
+      setState(() {
+        _message = 'Signup successful. You can now log in.';
+      });
+
+      _formKey.currentState!.reset();
+      _firstNameController.clear();
+      _lastNameController.clear();
+      _emailController.clear();
+      _phoneController.clear();
+      _passwordController.clear();
+    } on AuthException catch (e) {
+      setState(() {
+        _message = 'Auth error: ${e.message}';
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Error: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  String? _requiredValidator(String? value, String fieldName) {
+    if (value == null || value.trim().isEmpty) {
+      return '$fieldName is required';
+    }
+    return null;
+  }
+
+  String? _emailValidator(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Email is required';
+    if (!value.contains('@') || !value.contains('.')) {
+      return 'Enter a valid email';
+    }
+    return null;
+  }
+
+  String? _passwordValidator(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Password is required';
+    if (value.trim().length < 6) {
+      return 'Password must be at least 6 characters';
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Create Account')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                TextFormField(
+                  controller: _firstNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'First Name',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) => _requiredValidator(value, 'First name'),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _lastNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Last Name',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) => _requiredValidator(value, 'Last name'),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: _emailValidator,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _phoneController,
+                  decoration: const InputDecoration(
+                    labelText: 'Phone',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.phone,
+                  validator: (value) => _requiredValidator(value, 'Phone'),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _passwordController,
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
+                  ),
+                  validator: _passwordValidator,
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _signUp,
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Create Account'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: widget.onSwitchToLogin,
+                  child: const Text('Already have an account? Login'),
+                ),
+                if (_message != null) ...[
+                  const SizedBox(height: 16),
+                  Text(_message!, textAlign: TextAlign.center),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  List<dynamic> _ministries = [];
+  Map<String, dynamic>? _profile;
+  bool _isLoading = true;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHomeData();
+  }
+
+  Future<void> _loadHomeData() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) throw Exception('No authenticated user found.');
+
+      final profileResponse = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .single();
+
+      final ministriesResponse = await supabase
+          .from('ministries')
+          .select()
+          .order('name');
+
+      setState(() {
+        _profile = profileResponse;
+        _ministries = ministriesResponse;
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Failed to load home data: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _logout() async {
+    await supabase.auth.signOut();
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthPage()),
+      (route) => false,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final firstName = _profile?['first_name'] ?? 'User';
+    final role = _profile?['role'] ?? 'volunteer';
+    final isAdmin = role == 'admin';
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Choir Scheduler'),
+        actions: [
+          IconButton(
+            onPressed: _logout,
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _message != null
+            ? Center(child: Text(_message!))
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isAdmin
+                        ? 'Welcome, $firstName (Admin)'
+                        : 'Welcome, $firstName',
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                  const SizedBox(height: 24),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[
+                      const Text(
+                        'Ministries',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MonthlySchedulePage(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.calendar_view_month),
+                        label: const Text('Monthly'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MySchedulePage(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.calendar_month),
+                        label: const Text('My Schedule'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MyAvailabilityPage(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.event_available),
+                        label: const Text('Availability'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _ministries.length,
+                      itemBuilder: (context, index) {
+                        final ministry = _ministries[index];
+                        return Card(
+                          child: ListTile(
+                            title: Text(ministry['name'] ?? ''),
+                            subtitle: Text(ministry['description'] ?? ''),
+                            trailing: const Icon(Icons.arrow_forward_ios),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => TeamsPage(
+                                    ministryId: ministry['id'],
+                                    ministryName: ministry['name'],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class TeamsPage extends StatefulWidget {
+  final String ministryId;
+  final String ministryName;
+
+  const TeamsPage({
+    super.key,
+    required this.ministryId,
+    required this.ministryName,
+  });
+
+  @override
+  State<TeamsPage> createState() => _TeamsPageState();
+}
+
+class _TeamsPageState extends State<TeamsPage> {
+  List<dynamic> _teams = [];
+  bool _isLoading = true;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTeams();
+  }
+
+  Future<void> _loadTeams() async {
+    try {
+      final response = await supabase
+          .from('teams')
+          .select()
+          .eq('ministry_id', widget.ministryId)
+          .order('name');
+
+      setState(() {
+        _teams = response;
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Failed to load teams: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.ministryName)),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _message != null
+            ? Center(child: Text(_message!))
+            : ListView.builder(
+                itemCount: _teams.length,
+                itemBuilder: (context, index) {
+                  final team = _teams[index];
+                  return Card(
+                    child: ListTile(
+                      title: Text(team['name'] ?? ''),
+                      subtitle: Text(team['description'] ?? ''),
+                      trailing: const Icon(Icons.arrow_forward_ios),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ServiceInstancesPage(
+                              ministryId: widget.ministryId,
+                              teamId: team['id'],
+                              teamName: team['name'],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class ServiceInstancesPage extends StatefulWidget {
+  final String ministryId;
+  final String teamId;
+  final String teamName;
+
+  const ServiceInstancesPage({
+    super.key,
+    required this.ministryId,
+    required this.teamId,
+    required this.teamName,
+  });
+
+  @override
+  State<ServiceInstancesPage> createState() => _ServiceInstancesPageState();
+}
+
+class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
+  List<dynamic> _instances = [];
+  bool _isLoading = true;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInstances();
+  }
+
+  Future<void> _loadInstances() async {
+    try {
+      final response = await supabase
+          .from('service_instances')
+          .select()
+          .eq('ministry_id', widget.ministryId)
+          .eq('team_id', widget.teamId)
+          .order('service_date')
+          .order('start_time');
+
+      setState(() {
+        _instances = response;
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Failed to load service instances: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _formatDate(String rawDate) {
+    final parts = rawDate.split('-');
+    if (parts.length != 3) return rawDate;
+    return '${parts[1]}/${parts[2]}/${parts[0]}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.teamName)),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _message != null
+            ? Center(child: Text(_message!))
+            : _instances.isEmpty
+            ? const Center(child: Text('No service instances found.'))
+            : ListView.builder(
+                itemCount: _instances.length,
+                itemBuilder: (context, index) {
+                  final instance = _instances[index];
+                  return Card(
+                    child: ListTile(
+                      title: Text(instance['service_name'] ?? ''),
+                      subtitle: Text(
+                        '${_formatDate(instance['service_date'])} • ${instance['start_time']} - ${instance['end_time']}\n${instance['location'] ?? ''}',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ServiceSlotsPage(
+                              serviceInstanceId: instance['id'],
+                              serviceTitle:
+                                  instance['service_name'] ?? 'Service',
+                              serviceDate: _formatDate(
+                                instance['service_date'],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class ServiceSlotsPage extends StatefulWidget {
+  final String serviceInstanceId;
+  final String serviceTitle;
+  final String serviceDate;
+
+  const ServiceSlotsPage({
+    super.key,
+    required this.serviceInstanceId,
+    required this.serviceTitle,
+    required this.serviceDate,
+  });
+
+  @override
+  State<ServiceSlotsPage> createState() => _ServiceSlotsPageState();
+}
+
+class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
+  bool _isAdmin = false;
+  List<dynamic> _slots = [];
+  bool _isLoading = true;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSlots();
+  }
+
+  Future<void> _loadSlots() async {
+    try {
+      final user = supabase.auth.currentUser;
+
+      if (user != null) {
+        final profile = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+
+        final role = profile['role']?.toString().trim().toLowerCase();
+
+        _isAdmin = role == 'admin';
+      }
+
+      final List<Map<String, dynamic>> response = await supabase
+          .from('service_slots')
+          .select('''
+            *,
+            profiles!service_slots_assigned_user_id_fkey (
+              first_name,
+              last_name
+            )
+          ''')
+          .eq('service_instance_id', widget.serviceInstanceId)
+          .order('slot_name');
+
+      setState(() {
+        _slots = response;
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Failed to load slots: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _claimSlot(Map<String, dynamic> slot) async {
+    try {
+      await supabase.rpc(
+        'claim_service_slot',
+        params: {'p_slot_id': slot['id']},
+      );
+
+      await _loadSlots();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Slot claimed successfully')),
+      );
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+
+      final errorText = e.message.toLowerCase();
+
+      final friendlyMessage = errorText.contains('already_claimed_same_service')
+          ? 'You already claimed another slot for this service.'
+          : errorText.contains('overlap_booking')
+          ? 'You already claimed another slot that overlaps with this service.'
+          : errorText.contains('slot_already_taken')
+          ? 'This slot has already been taken.'
+          : errorText.contains('user_marked_unavailable')
+          ? 'You marked yourself unavailable for this date.'
+          : 'Database error: ${e.message}';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  Future<void> _unclaimSlot(Map<String, dynamic> slot) async {
+    try {
+      final User? user = supabase.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('User not logged in');
+      }
+
+      if (slot['assigned_user_id'] != user.id) {
+        throw Exception('You can only unclaim your own slot.');
+      }
+
+      await supabase
+          .from('service_slots')
+          .update({
+            'slot_status': 'open',
+            'color_code': 'amber',
+            'assigned_user_id': null,
+          })
+          .eq('id', slot['id']);
+
+      await _loadSlots();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Slot unclaimed successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  Future<void> _adminRemoveSlot(Map<String, dynamic> slot) async {
+    try {
+      await supabase.rpc(
+        'admin_remove_service_slot',
+        params: {'p_slot_id': slot['id']},
+      );
+
+      await _loadSlots();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Admin removed user from slot')),
+      );
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+
+      final message = e.message.toLowerCase();
+
+      final friendlyMessage = message.contains('not_admin')
+          ? 'Only admins can remove users from slots.'
+          : 'Database error: ${e.message}';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadAssignableUsers() async {
+    final response = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name, email')
+        .order('first_name');
+
+    return List<Map<String, dynamic>>.from(response);
+  }
+
+  Future<void> _adminAssignSlot(Map<String, dynamic> slot) async {
+    try {
+      final users = await _loadAssignableUsers();
+
+      if (!mounted) return;
+
+      final selectedUser = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) {
+          return SimpleDialog(
+            title: const Text('Assign user'),
+            children: users.map((user) {
+              final name =
+                  '${user['first_name'] ?? ''} ${user['last_name'] ?? ''}'
+                      .trim();
+              final label = name.isEmpty ? user['email'] : name;
+
+              return SimpleDialogOption(
+                onPressed: () {
+                  Navigator.pop(context, user);
+                },
+                child: Text(label),
+              );
+            }).toList(),
+          );
+        },
+      );
+
+      if (selectedUser == null) return;
+
+      await supabase.rpc(
+        'admin_assign_service_slot_pending',
+        params: {'p_slot_id': slot['id'], 'p_user_id': selectedUser['id']},
+      );
+
+      await _loadSlots();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User assigned pending confirmation')),
+      );
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+
+      final message = e.message.toLowerCase();
+
+      final friendlyMessage = message.contains('not_admin')
+          ? 'Only admins can assign users.'
+          : message.contains('slot_not_open')
+          ? 'This slot is not available.'
+          : 'Database error: ${e.message}';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  Future<void> _respondToPendingSlot(
+    Map<String, dynamic> slot,
+    String response,
+  ) async {
+    try {
+      await supabase.rpc(
+        'respond_to_pending_service_slot',
+        params: {'p_slot_id': slot['id'], 'p_response': response},
+      );
+
+      await _loadSlots();
+
+      if (!mounted) return;
+
+      final message = response == 'accept'
+          ? 'Assignment accepted'
+          : 'Assignment declined';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+
+      final message = e.message.toLowerCase();
+
+      final friendlyMessage = message.contains('not_assigned_user')
+          ? 'Only the assigned user can respond to this request.'
+          : message.contains('slot_not_pending')
+          ? 'This slot is no longer pending.'
+          : 'Database error: ${e.message}';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  bool _isMine(Map<String, dynamic> slot) {
+    final user = supabase.auth.currentUser;
+    return slot['assigned_user_id'] == user?.id;
+  }
+
+  String _claimedByName(Map<String, dynamic> slot) {
+    final profile = slot['profiles'];
+    if (profile == null) return 'Unknown user';
+
+    final firstName = profile['first_name'] ?? '';
+    final lastName = profile['last_name'] ?? '';
+    final fullName = '$firstName $lastName'.trim();
+
+    return fullName.isEmpty ? 'Unknown user' : fullName;
+  }
+
+  Color _getColor(String? status) {
+    if (status == 'taken') {
+      return Colors.green.shade200;
+    }
+
+    if (status == 'pending') {
+      return Colors.blue.shade100;
+    }
+
+    return Colors.orange.shade200;
+  }
+
+  String _subtitleForSlot(Map<String, dynamic> slot) {
+    final status = slot['slot_status'];
+
+    if (status == 'open') {
+      return 'Available';
+    }
+
+    if (status == 'pending') {
+      if (_isMine(slot)) {
+        return 'Pending confirmation (Yours)';
+      }
+
+      return 'Pending confirmation by ${_claimedByName(slot)}';
+    }
+
+    if (_isMine(slot)) {
+      return 'Taken (Yours)';
+    }
+
+    return 'Taken by ${_claimedByName(slot)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.serviceTitle)),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _message != null
+            ? Center(child: Text(_message!))
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.serviceDate,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _slots.length,
+                      itemBuilder: (context, index) {
+                        final slot = _slots[index];
+                        final isOpen = slot['slot_status'] == 'open';
+                        final isMine = _isMine(slot);
+
+                        return Card(
+                          color: _getColor(slot['slot_status']),
+                          child: ListTile(
+                            title: Text(
+                              slot['role_name'] ?? slot['slot_name'] ?? '',
+                            ),
+                            subtitle: Text(_subtitleForSlot(slot)),
+                            trailing: isOpen
+                                ? const Icon(Icons.touch_app)
+                                : slot['slot_status'] == 'pending' && isMine
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.check_circle),
+                                        color: Colors.green,
+                                        onPressed: () => _respondToPendingSlot(
+                                          slot,
+                                          'accept',
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.cancel),
+                                        color: Colors.red,
+                                        onPressed: () => _respondToPendingSlot(
+                                          slot,
+                                          'decline',
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : slot['slot_status'] == 'pending'
+                                ? const Icon(Icons.hourglass_top)
+                                : isMine
+                                ? const Icon(Icons.undo)
+                                : _isAdmin
+                                ? const Icon(Icons.admin_panel_settings)
+                                : const Icon(Icons.check),
+                            onTap: isOpen
+                                ? _isAdmin
+                                      ? () => _adminAssignSlot(slot)
+                                      : () => _claimSlot(slot)
+                                : slot['slot_status'] == 'pending'
+                                ? null
+                                : isMine
+                                ? () => _unclaimSlot(slot)
+                                : _isAdmin
+                                ? () => _adminRemoveSlot(slot)
+                                : null,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class MonthlySchedulePage extends StatefulWidget {
+  const MonthlySchedulePage({super.key});
+
+  @override
+  State<MonthlySchedulePage> createState() => _MonthlySchedulePageState();
+}
+
+class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
+  bool _isLoading = true;
+  bool _isAdmin = false;
+
+  List<Map<String, dynamic>> _services = [];
+
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadServices();
+  }
+
+  Future<void> _loadServices() async {
+    try {
+      final user = supabase.auth.currentUser;
+
+      if (user != null) {
+        final profile = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+
+        final role = profile['role']?.toString().trim().toLowerCase();
+
+        _isAdmin = role == 'admin';
+      }
+      final now = DateTime.now();
+
+      final firstDay = DateTime(now.year, now.month, 1);
+
+      final lastDay = DateTime(now.year, now.month + 1, 0);
+
+      final response = await supabase
+          .from('service_instances')
+          .select('''
+            *,
+            teams (
+              name
+            )
+          ''')
+          .gte('service_date', firstDay.toIso8601String().split('T')[0])
+          .lte('service_date', lastDay.toIso8601String().split('T')[0])
+          .order('service_date')
+          .order('start_time');
+
+      setState(() {
+        _services = List<Map<String, dynamic>>.from(response);
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Failed to load services: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _createServiceInstance() async {
+    try {
+      final teams = await supabase
+          .from('teams')
+          .select('id, name')
+          .order('name');
+
+      if (!mounted) return;
+
+      Map<String, dynamic>? selectedTeam;
+      String selectedServiceType = 'Service';
+
+      final locationController = TextEditingController();
+
+      final dateController = TextEditingController();
+
+      final startTimeController = TextEditingController();
+
+      final endTimeController = TextEditingController();
+      String formatDateForDb(DateTime date) {
+        final year = date.year.toString().padLeft(4, '0');
+        final month = date.month.toString().padLeft(2, '0');
+        final day = date.day.toString().padLeft(2, '0');
+        return '$year-$month-$day';
+      }
+
+      String formatTimeForDb(TimeOfDay time) {
+        final hour = time.hour.toString().padLeft(2, '0');
+        final minute = time.minute.toString().padLeft(2, '0');
+        return '$hour:$minute:00';
+      }
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Create Service'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButtonFormField<Map<String, dynamic>>(
+                        value: selectedTeam,
+                        items: teams
+                            .map<DropdownMenuItem<Map<String, dynamic>>>((
+                              team,
+                            ) {
+                              return DropdownMenuItem(
+                                value: team,
+                                child: Text(team['name']),
+                              );
+                            })
+                            .toList(),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedTeam = value;
+                          });
+                        },
+                        decoration: const InputDecoration(labelText: 'Team'),
+                      ),
+                      DropdownButtonFormField<Map<String, dynamic>>(
+                        value: selectedTeam,
+                        items: teams
+                            .map<DropdownMenuItem<Map<String, dynamic>>>((
+                              team,
+                            ) {
+                              return DropdownMenuItem(
+                                value: team,
+                                child: Text(team['name']),
+                              );
+                            })
+                            .toList(),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedTeam = value;
+                          });
+                        },
+                        decoration: const InputDecoration(labelText: 'Team'),
+                      ),
+
+                      DropdownButtonFormField<String>(
+                        value: selectedServiceType,
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'Service',
+                            child: Text('Service'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Rehearsal',
+                            child: Text('Rehearsal'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Special Event',
+                            child: Text('Special Event'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Prayer Night',
+                            child: Text('Prayer Night'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+
+                          setDialogState(() {
+                            selectedServiceType = value;
+                          });
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Service Type',
+                        ),
+                      ),
+
+                      TextField(
+                        controller: dateController,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Date',
+                          suffixIcon: Icon(Icons.calendar_today),
+                        ),
+                        onTap: () async {
+                          final pickedDate = await showDatePicker(
+                            context: context,
+                            initialDate: DateTime.now(),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime(DateTime.now().year + 2),
+                          );
+
+                          if (pickedDate != null) {
+                            dateController.text = formatDateForDb(pickedDate);
+                          }
+                        },
+                      ),
+
+                      TextField(
+                        controller: startTimeController,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Start Time',
+                          suffixIcon: Icon(Icons.access_time),
+                        ),
+                        onTap: () async {
+                          final pickedTime = await showTimePicker(
+                            context: context,
+                            initialTime: const TimeOfDay(hour: 9, minute: 45),
+                          );
+
+                          if (pickedTime != null) {
+                            startTimeController.text = formatTimeForDb(
+                              pickedTime,
+                            );
+                          }
+                        },
+                      ),
+
+                      TextField(
+                        controller: endTimeController,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'End Time',
+                          suffixIcon: Icon(Icons.access_time),
+                        ),
+                        onTap: () async {
+                          final pickedTime = await showTimePicker(
+                            context: context,
+                            initialTime: const TimeOfDay(hour: 11, minute: 0),
+                          );
+
+                          if (pickedTime != null) {
+                            endTimeController.text = formatTimeForDb(
+                              pickedTime,
+                            );
+                          }
+                        },
+                      ),
+
+                      TextField(
+                        controller: locationController,
+                        decoration: const InputDecoration(
+                          labelText: 'Location',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(context, false);
+                    },
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context, true);
+                    },
+                    child: const Text('Create'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (confirmed != true ||
+          selectedTeam == null ||
+          dateController.text.isEmpty ||
+          startTimeController.text.isEmpty ||
+          endTimeController.text.isEmpty) {
+        return;
+      }
+
+      final inserted = await supabase
+          .from('service_instances')
+          .insert({
+            'team_id': selectedTeam!['id'],
+            'service_name':
+                '${DateTime.parse(dateController.text).weekday == 7
+                    ? 'Sunday'
+                    : DateTime.parse(dateController.text).weekday == 6
+                    ? 'Saturday'
+                    : DateTime.parse(dateController.text).weekday == 3
+                    ? 'Wednesday'
+                    : 'Service'} '
+                '${startTimeController.text.substring(0, 5)} '
+                '$selectedServiceType',
+            'service_date': dateController.text.trim(),
+            'start_time': startTimeController.text.trim(),
+            'end_time': endTimeController.text.trim(),
+            'location': locationController.text.trim(),
+            'status': 'active',
+          })
+          .select()
+          .single();
+
+      await supabase.rpc(
+        'generate_slots_from_team_roles',
+        params: {'p_service_instance_id': inserted['id']},
+      );
+
+      await _loadServices();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Service created successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  String _formatDate(String rawDate) {
+    final parts = rawDate.split('-');
+
+    if (parts.length != 3) return rawDate;
+
+    return '${parts[1]}/${parts[2]}/${parts[0]}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Monthly Schedule'),
+        actions: [
+          if (_isAdmin)
+            IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: _createServiceInstance,
+            ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _message != null
+            ? Center(child: Text(_message!))
+            : _services.isEmpty
+            ? const Center(child: Text('No services this month'))
+            : ListView.builder(
+                itemCount: _services.length,
+                itemBuilder: (context, index) {
+                  final service = _services[index];
+
+                  final team = service['teams']?['name'] ?? '';
+
+                  return Card(
+                    child: ListTile(
+                      title: Text(service['service_name'] ?? ''),
+                      subtitle: Text(
+                        '${_formatDate(service['service_date'])}'
+                        ' • ${service['start_time']}'
+                        ' - ${service['end_time']}\n'
+                        '$team\n'
+                        '${service['location'] ?? ''}',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ServiceSlotsPage(
+                              serviceInstanceId: service['id'],
+                              serviceTitle:
+                                  service['service_name'] ?? 'Service',
+                              serviceDate: _formatDate(service['service_date']),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class MySchedulePage extends StatefulWidget {
+  const MySchedulePage({super.key});
+
+  @override
+  State<MySchedulePage> createState() => _MySchedulePageState();
+}
+
+class _MySchedulePageState extends State<MySchedulePage> {
+  List<dynamic> _schedule = [];
+  bool _isLoading = true;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMySchedule();
+  }
+
+  Future<void> _loadMySchedule() async {
+    try {
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('User not logged in');
+      }
+
+      final response = await supabase
+          .from('service_slots')
+          .select('''
+            id,
+            slot_name,
+            service_instances!inner (
+              id,
+              service_name,
+              service_date,
+              start_time,
+              end_time,
+              location,
+              teams (
+                name
+              ),
+              ministries (
+                name
+              )
+            )
+          ''')
+          .eq('assigned_user_id', user.id)
+          .eq('slot_status', 'taken')
+          .gte(
+            'service_instances.service_date',
+            DateTime.now().toIso8601String().split('T').first,
+          )
+          .order('service_instances(service_date)')
+          .order('service_instances(start_time)');
+
+      setState(() {
+        _schedule = response;
+      });
+    } catch (e) {
+      setState(() {
+        _message = 'Failed to load schedule: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _formatDate(String rawDate) {
+    final List<String> parts = rawDate.split('-');
+    if (parts.length != 3) return rawDate;
+    return '${parts[1]}/${parts[2]}/${parts[0]}';
+  }
+
+  bool _hasConflict(Map<String, dynamic> currentSlot) {
+    final currentService = currentSlot['service_instances'];
+    if (currentService == null) return false;
+
+    final currentDate = currentService['service_date'];
+    final currentStart = currentService['start_time'];
+    final currentEnd = currentService['end_time'];
+    final currentServiceId = currentService['id'];
+
+    for (final otherSlot in _schedule) {
+      final otherService = otherSlot['service_instances'];
+      if (otherService == null) continue;
+
+      if (otherService['id'] == currentServiceId) continue;
+      if (otherService['service_date'] != currentDate) continue;
+
+      final otherStart = otherService['start_time'];
+      final otherEnd = otherService['end_time'];
+
+      final overlaps =
+          currentStart.compareTo(otherEnd) < 0 &&
+          currentEnd.compareTo(otherStart) > 0;
+
+      if (overlaps) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  Future<void> _unclaimFromSchedule(Map<String, dynamic> slot) async {
+    try {
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('User not logged in');
+      }
+
+      final updatedRows = await supabase
+          .from('service_slots')
+          .update({
+            'slot_status': 'open',
+            'color_code': 'amber',
+            'assigned_user_id': null,
+          })
+          .eq('id', slot['id'])
+          .eq('assigned_user_id', user.id)
+          .select();
+
+      if (updatedRows.isEmpty) {
+        throw Exception('Could not unclaim this slot.');
+      }
+
+      await _loadMySchedule();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Removed from your schedule')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Schedule')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _message != null
+            ? Center(child: Text(_message!))
+            : _schedule.isEmpty
+            ? const Center(
+                child: Text('You do not have any upcoming scheduled services.'),
+              )
+            : ListView.builder(
+                itemCount: _schedule.length,
+                itemBuilder: (context, index) {
+                  final slot = _schedule[index];
+                  final service = slot['service_instances'];
+
+                  final ministry = service['ministries']?['name'] ?? '';
+                  final team = service['teams']?['name'] ?? '';
+
+                  final hasConflict = _hasConflict(slot);
+
+                  return Card(
+                    color: hasConflict ? Colors.red.shade100 : null,
+                    child: ListTile(
+                      title: Text(service['service_name'] ?? ''),
+                      subtitle: Text(
+                        '${_formatDate(service['service_date'])} • ${service['start_time']} - ${service['end_time']}\n'
+                        '${slot['role_name'] ?? slot['slot_name']} • $ministry • $team\n'
+                        '${service['location'] ?? ''}'
+                        '${hasConflict ? '\n⚠️ Conflict: overlapping service time' : ''}',
+                      ),
+                      leading: Icon(
+                        hasConflict ? Icons.warning : Icons.event_available,
+                        color: hasConflict ? Colors.red : null,
+                      ),
+                      trailing: const Icon(Icons.undo),
+                      onTap: () {
+                        _unclaimFromSchedule(slot);
+                      },
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class MyAvailabilityPage extends StatefulWidget {
+  const MyAvailabilityPage({super.key});
+
+  @override
+  State<MyAvailabilityPage> createState() => _MyAvailabilityPageState();
+}
+
+class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
+  final supabase = Supabase.instance.client;
+
+  bool _isLoading = true;
+
+  List<Map<String, dynamic>> _availability = [];
+
+  DateTime _focusedDay = DateTime.now();
+
+  DateTime? _selectedDay;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvailability();
+  }
+
+  Future<void> _loadAvailability() async {
+    try {
+      final User? user = supabase.auth.currentUser;
+
+      if (user == null) return;
+
+      final response = await supabase
+          .from('user_availability')
+          .select()
+          .eq('user_id', user.id)
+          .order('availability_date');
+
+      setState(() {
+        _availability = List<Map<String, dynamic>>.from(response);
+      });
+    } catch (e) {
+      debugPrint('Availability load error: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _toggleAvailability(DateTime day) async {
+    try {
+      final User? user = supabase.auth.currentUser;
+
+      if (user == null) return;
+
+      final formattedDate = day.toIso8601String().split('T')[0];
+
+      final existing = _availability.where((item) {
+        return item['availability_date'] == formattedDate;
+      }).toList();
+
+      if (existing.isNotEmpty) {
+        await supabase
+            .from('user_availability')
+            .delete()
+            .eq('id', existing.first['id']);
+      } else {
+        await supabase.from('user_availability').insert({
+          'user_id': user.id,
+          'availability_date': formattedDate,
+          'status': 'unavailable',
+        });
+      }
+
+      await _loadAvailability();
+    } catch (e) {
+      debugPrint('Availability toggle error: $e');
+    }
+  }
+
+  bool _isUnavailable(DateTime day) {
+    final formattedDate = day.toIso8601String().split('T')[0];
+
+    return _availability.any((item) {
+      return item['availability_date'] == formattedDate;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Availability')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                TableCalendar(
+                  firstDay: DateTime.utc(2025, 1, 1),
+                  lastDay: DateTime.utc(2030, 12, 31),
+                  focusedDay: _focusedDay,
+                  selectedDayPredicate: (day) {
+                    return isSameDay(_selectedDay, day);
+                  },
+                  calendarStyle: CalendarStyle(
+                    markerDecoration: BoxDecoration(
+                      color: Colors.red.shade400,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  calendarBuilders: CalendarBuilders(
+                    defaultBuilder: (context, day, focusedDay) {
+                      if (_isUnavailable(day)) {
+                        return Container(
+                          margin: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade200,
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child: Text('${day.day}'),
+                        );
+                      }
+
+                      return null;
+                    },
+                  ),
+                  onDaySelected: (selectedDay, focusedDay) async {
+                    setState(() {
+                      _selectedDay = selectedDay;
+                      _focusedDay = focusedDay;
+                    });
+
+                    await _toggleAvailability(selectedDay);
+                  },
+                ),
+
+                const SizedBox(height: 12),
+
+                Expanded(
+                  child: _availability.isEmpty
+                      ? const Center(
+                          child: Text('No unavailable dates selected.'),
+                        )
+                      : ListView.builder(
+                          itemCount: _availability.length,
+                          itemBuilder: (context, index) {
+                            final item = _availability[index];
+
+                            return Card(
+                              child: ListTile(
+                                leading: const Icon(
+                                  Icons.block,
+                                  color: Colors.red,
+                                ),
+                                title: Text(item['availability_date']),
+                                subtitle: const Text('Unavailable'),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+    );
+  }
+}
