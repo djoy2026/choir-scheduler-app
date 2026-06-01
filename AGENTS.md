@@ -17,6 +17,7 @@ Requirements
 - Generate SQL migration scripts but do not execute them.
 
 
+
 Current Features
 - User login
 - Claim/unclaim slots
@@ -32,3 +33,8 @@ Upcoming Feature
   - Backup Singer 1
   - Backup Singer 2
   - Backup Singer 3
+
+  Git Rules
+- Work only on the current branch.
+- Never push directly to main.
+- Show all proposed changes before committing.
