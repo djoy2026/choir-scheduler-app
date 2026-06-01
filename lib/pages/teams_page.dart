@@ -1,4 +1,5 @@
 import 'service_instances_page.dart';
+import 'team_roles_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -24,6 +25,8 @@ class _TeamsPageState extends State<TeamsPage> {
 
   bool _isLoading = true;
 
+  bool _isAdmin = false;
+
   String? _message;
 
   @override
@@ -34,6 +37,20 @@ class _TeamsPageState extends State<TeamsPage> {
 
   Future<void> _loadTeams() async {
     try {
+      final user = supabase.auth.currentUser;
+
+      if (user != null) {
+        final profile = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+
+        final role = profile['role']?.toString().trim().toLowerCase();
+
+        _isAdmin = role == 'admin';
+      }
+
       final response = await supabase
           .from('teams')
           .select()
@@ -73,6 +90,33 @@ class _TeamsPageState extends State<TeamsPage> {
                     child: ListTile(
                       title: Text(team['name'] ?? ''),
                       subtitle: Text(team['description'] ?? ''),
+                      trailing: _isAdmin
+                          ? PopupMenuButton<String>(
+                              onSelected: (value) {
+                                if (value == 'manage_roles') {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => TeamRolesPage(
+                                        ministryId: widget.ministryId,
+                                        ministryName: widget.ministryName,
+                                        teamId: team['id'],
+                                        teamName: team['name'],
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                              itemBuilder: (context) {
+                                return const [
+                                  PopupMenuItem(
+                                    value: 'manage_roles',
+                                    child: Text('Manage Roles'),
+                                  ),
+                                ];
+                              },
+                            )
+                          : null,
                       onTap: () {
                         Navigator.push(
                           context,

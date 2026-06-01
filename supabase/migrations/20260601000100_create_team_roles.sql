@@ -1,21 +1,80 @@
--- Create team-specific service role definitions.
--- This migration only defines the role configuration table.
+-- Upgrade existing team-specific service role definitions.
+-- The live team_roles table already exists with:
+-- id, team_id, role_name, display_order, created_at.
 -- It does not seed production data and does not modify existing service slots.
 
-create table if not exists public.team_roles (
-  id uuid primary key default gen_random_uuid(),
-  team_id uuid not null references public.teams(id) on delete cascade,
-  role_name text not null,
-  quantity integer not null default 1,
-  display_order integer not null default 0,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint team_roles_role_name_not_blank
-    check (length(trim(role_name)) > 0),
-  constraint team_roles_quantity_positive
+alter table public.team_roles
+add column if not exists quantity integer;
+
+update public.team_roles
+set quantity = 1
+where quantity is null;
+
+alter table public.team_roles
+alter column quantity set default 1;
+
+alter table public.team_roles
+alter column quantity set not null;
+
+alter table public.team_roles
+add column if not exists is_active boolean;
+
+update public.team_roles
+set is_active = true
+where is_active is null;
+
+alter table public.team_roles
+alter column is_active set default true;
+
+alter table public.team_roles
+alter column is_active set not null;
+
+alter table public.team_roles
+add column if not exists updated_at timestamptz;
+
+update public.team_roles
+set updated_at = created_at
+where updated_at is null;
+
+alter table public.team_roles
+alter column updated_at set default now();
+
+alter table public.team_roles
+alter column updated_at set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'team_roles_role_name_not_blank'
+      and conrelid = 'public.team_roles'::regclass
+  ) then
+    alter table public.team_roles
+    add constraint team_roles_role_name_not_blank
+    check (length(trim(role_name)) > 0)
+    not valid;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'team_roles_quantity_positive'
+      and conrelid = 'public.team_roles'::regclass
+  ) then
+    alter table public.team_roles
+    add constraint team_roles_quantity_positive
     check (quantity > 0)
-);
+    not valid;
+  end if;
+end;
+$$;
+
+alter table public.team_roles
+validate constraint team_roles_role_name_not_blank;
+
+alter table public.team_roles
+validate constraint team_roles_quantity_positive;
 
 create index if not exists idx_team_roles_team_active_order
 on public.team_roles (team_id, is_active, display_order);
