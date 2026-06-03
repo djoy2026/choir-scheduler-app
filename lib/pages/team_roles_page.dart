@@ -22,6 +22,9 @@ class TeamRolesPage extends StatefulWidget {
 }
 
 class _TeamRolesPageState extends State<TeamRolesPage> {
+  static const int _minQuantity = 1;
+  static const int _maxQuantity = 20;
+
   bool _isLoading = true;
   bool _isAdmin = false;
 
@@ -131,15 +134,224 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
     final roleName = role['role_name']?.toString().trim() ?? '';
     final quantity = _quantityFor(role);
 
-    if (roleName.isEmpty) {
+    return _generatedLabels(roleName, quantity);
+  }
+
+  List<String> _generatedLabels(String roleName, int quantity) {
+    final trimmedRoleName = roleName.trim();
+
+    if (trimmedRoleName.isEmpty) {
       return const [];
     }
 
-    if (quantity <= 1) {
-      return [roleName];
+    final safeQuantity = quantity.clamp(_minQuantity, _maxQuantity);
+
+    if (safeQuantity <= 1) {
+      return [trimmedRoleName];
     }
 
-    return List.generate(quantity, (index) => '$roleName ${index + 1}');
+    return List.generate(
+      safeQuantity,
+      (index) => '$trimmedRoleName ${index + 1}',
+    );
+  }
+
+  int _nextDisplayOrder() {
+    if (_roles.isEmpty) {
+      return 1;
+    }
+
+    final maxDisplayOrder = _roles.map(_displayOrderFor).fold<int>(0, (
+      currentMax,
+      order,
+    ) {
+      return order > currentMax ? order : currentMax;
+    });
+
+    return maxDisplayOrder + 1;
+  }
+
+  Future<void> _showAddRoleDialog() async {
+    final formKey = GlobalKey<FormState>();
+    final roleNameController = TextEditingController();
+    var quantity = 1;
+    var isSaving = false;
+
+    try {
+      final wasSaved = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final previewLabels = _generatedLabels(
+                roleNameController.text,
+                quantity,
+              );
+              final previewText = previewLabels.isEmpty
+                  ? 'Enter a role name to preview slots.'
+                  : previewLabels.join(', ');
+
+              Future<void> saveRole() async {
+                if (isSaving) {
+                  return;
+                }
+
+                if (!(formKey.currentState?.validate() ?? false)) {
+                  return;
+                }
+
+                setDialogState(() {
+                  isSaving = true;
+                });
+
+                try {
+                  await supabase.from('team_roles').insert({
+                    'team_id': widget.teamId,
+                    'role_name': roleNameController.text.trim(),
+                    'quantity': quantity,
+                    'display_order': _nextDisplayOrder(),
+                    'is_active': true,
+                  });
+
+                  if (dialogContext.mounted) {
+                    Navigator.pop(dialogContext, true);
+                  }
+                } catch (e) {
+                  if (!dialogContext.mounted) {
+                    return;
+                  }
+
+                  setDialogState(() {
+                    isSaving = false;
+                  });
+
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(content: Text('Failed to save role: $e')),
+                  );
+                }
+              }
+
+              return AlertDialog(
+                title: const Text('Add Role'),
+                content: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFormField(
+                          controller: roleNameController,
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Role Name',
+                          ),
+                          textCapitalization: TextCapitalization.words,
+                          validator: (value) {
+                            if ((value ?? '').trim().isEmpty) {
+                              return 'Enter a role name';
+                            }
+
+                            return null;
+                          },
+                          onChanged: (_) {
+                            setDialogState(() {});
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Quantity',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Decrease quantity',
+                              onPressed: quantity <= _minQuantity || isSaving
+                                  ? null
+                                  : () {
+                                      setDialogState(() {
+                                        quantity--;
+                                      });
+                                    },
+                              icon: const Icon(Icons.remove_circle_outline),
+                            ),
+                            SizedBox(
+                              width: 32,
+                              child: Text(
+                                '$quantity',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Increase quantity',
+                              onPressed: quantity >= _maxQuantity || isSaving
+                                  ? null
+                                  : () {
+                                      setDialogState(() {
+                                        quantity++;
+                                      });
+                                    },
+                              icon: const Icon(Icons.add_circle_outline),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Generated slot preview',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(previewText),
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: isSaving
+                        ? null
+                        : () {
+                            Navigator.pop(dialogContext, false);
+                          },
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: isSaving ? null : saveRole,
+                    child: isSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Save'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (wasSaved == true) {
+        await _loadData();
+
+        if (!mounted) {
+          return;
+        }
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Role added')));
+      }
+    } finally {
+      roleNameController.dispose();
+    }
   }
 
   Widget _buildSummary(BuildContext context) {
@@ -293,7 +505,17 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Team Roles')),
+      appBar: AppBar(
+        title: const Text('Team Roles'),
+        actions: [
+          if (_isAdmin && !_isLoading && _message == null)
+            TextButton.icon(
+              onPressed: _showAddRoleDialog,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Role'),
+            ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: _isLoading
