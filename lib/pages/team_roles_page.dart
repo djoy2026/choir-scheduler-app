@@ -348,6 +348,334 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
     }
   }
 
+  Future<void> _showEditRoleDialog(Map<String, dynamic> role) async {
+    final formKey = GlobalKey<FormState>();
+    var roleName = role['role_name']?.toString() ?? '';
+    var quantity = _quantityFor(role).clamp(_minQuantity, _maxQuantity);
+    var displayOrder = _displayOrderFor(role).toString();
+    var isSaving = false;
+
+    final wasSaved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final previewLabels = _generatedLabels(roleName, quantity);
+            final previewText = previewLabels.isEmpty
+                ? 'Enter a role name to preview slots.'
+                : previewLabels.join(', ');
+
+            Future<void> saveRole() async {
+              if (isSaving) {
+                return;
+              }
+
+              if (!(formKey.currentState?.validate() ?? false)) {
+                return;
+              }
+
+              setDialogState(() {
+                isSaving = true;
+              });
+
+              try {
+                await supabase
+                    .from('team_roles')
+                    .update({
+                      'role_name': roleName.trim(),
+                      'quantity': quantity,
+                      'display_order': int.parse(displayOrder.trim()),
+                      'updated_at': DateTime.now().toUtc().toIso8601String(),
+                    })
+                    .eq('id', role['id']);
+
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext, true);
+                }
+              } catch (e) {
+                if (!dialogContext.mounted) {
+                  return;
+                }
+
+                setDialogState(() {
+                  isSaving = false;
+                });
+
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(content: Text('Failed to update role: $e')),
+                );
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Edit Role'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextFormField(
+                        initialValue: roleName,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Role Name',
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                        validator: (value) {
+                          if ((value ?? '').trim().isEmpty) {
+                            return 'Enter a role name';
+                          }
+
+                          return null;
+                        },
+                        onChanged: (value) {
+                          setDialogState(() {
+                            roleName = value;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Quantity',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Decrease quantity',
+                            onPressed: quantity <= _minQuantity || isSaving
+                                ? null
+                                : () {
+                                    setDialogState(() {
+                                      quantity--;
+                                    });
+                                  },
+                            icon: const Icon(Icons.remove_circle_outline),
+                          ),
+                          SizedBox(
+                            width: 32,
+                            child: Text(
+                              '$quantity',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Increase quantity',
+                            onPressed: quantity >= _maxQuantity || isSaving
+                                ? null
+                                : () {
+                                    setDialogState(() {
+                                      quantity++;
+                                    });
+                                  },
+                            icon: const Icon(Icons.add_circle_outline),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        initialValue: displayOrder,
+                        decoration: const InputDecoration(
+                          labelText: 'Display Order',
+                        ),
+                        keyboardType: TextInputType.number,
+                        validator: (value) {
+                          if (int.tryParse((value ?? '').trim()) == null) {
+                            return 'Enter a whole number';
+                          }
+
+                          return null;
+                        },
+                        onChanged: (value) {
+                          displayOrder = value;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Generated slot preview',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(previewText),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSaving
+                      ? null
+                      : () {
+                          Navigator.pop(dialogContext, false);
+                        },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSaving ? null : saveRole,
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (wasSaved == true) {
+      await _loadData();
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Role updated')));
+    }
+  }
+
+  Future<void> _setRoleActive(
+    Map<String, dynamic> role, {
+    required bool isActive,
+  }) async {
+    try {
+      await supabase
+          .from('team_roles')
+          .update({
+            'is_active': isActive,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', role['id']);
+
+      await _loadData();
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isActive ? 'Role reactivated' : 'Role deactivated'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to update role: $e')));
+    }
+  }
+
+  Future<void> _confirmDeleteRole(Map<String, dynamic> role) async {
+    final roleName = role['role_name']?.toString() ?? 'this role';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete Role'),
+          content: Text('Permanently delete $roleName?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await supabase.from('team_roles').delete().eq('id', role['id']);
+
+      await _loadData();
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Role deleted')));
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to delete role: $e')));
+    }
+  }
+
+  Future<void> _handleRoleAction(
+    String action,
+    Map<String, dynamic> role,
+  ) async {
+    switch (action) {
+      case 'edit':
+        await _showEditRoleDialog(role);
+        return;
+      case 'deactivate':
+        await _setRoleActive(role, isActive: false);
+        return;
+      case 'reactivate':
+        await _setRoleActive(role, isActive: true);
+        return;
+      case 'delete':
+        await _confirmDeleteRole(role);
+        return;
+    }
+  }
+
+  Widget _buildRoleActions(Map<String, dynamic> role) {
+    final isActive = _isActiveRole(role);
+
+    return PopupMenuButton<String>(
+      tooltip: 'Role actions',
+      onSelected: (action) {
+        _handleRoleAction(action, role);
+      },
+      itemBuilder: (context) {
+        return [
+          const PopupMenuItem(value: 'edit', child: Text('Edit')),
+          PopupMenuItem(
+            value: isActive ? 'deactivate' : 'reactivate',
+            child: Text(isActive ? 'Deactivate' : 'Reactivate'),
+          ),
+          const PopupMenuItem(value: 'delete', child: Text('Delete')),
+        ];
+      },
+    );
+  }
+
   Widget _buildSummary(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
 
@@ -401,9 +729,17 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
             ],
           ),
         ),
-        trailing: Chip(
-          label: Text(isActive ? 'Active' : 'Inactive'),
-          backgroundColor: isActive ? Colors.green.shade100 : Colors.grey[300],
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Chip(
+              label: Text(isActive ? 'Active' : 'Inactive'),
+              backgroundColor: isActive
+                  ? Colors.green.shade100
+                  : Colors.grey[300],
+            ),
+            _buildRoleActions(role),
+          ],
         ),
       ),
     );
@@ -429,6 +765,7 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
           DataColumn(label: Text('Qty')),
           DataColumn(label: Text('Generates')),
           DataColumn(label: Text('Status')),
+          DataColumn(label: Text('Actions')),
         ],
         rows: _roles.map((role) {
           final isActive = _isActiveRole(role);
@@ -448,6 +785,7 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
                 ),
               ),
               DataCell(Text(isActive ? 'Active' : 'Inactive')),
+              DataCell(_buildRoleActions(role)),
             ],
           );
         }).toList(),
