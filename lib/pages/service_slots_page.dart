@@ -131,8 +131,11 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
 
       String friendlyMessage = 'Database error occurred';
 
-      if (errorText.contains('ux_service_slots_one_user_per_service')) {
-        friendlyMessage = 'You already claimed another slot for this service.';
+      if (errorText.contains('ux_service_slots_one_user_per_service') ||
+          errorText.contains('constraint') ||
+          errorText.contains('duplicate')) {
+        friendlyMessage =
+            'You already have a position assigned or pending for this service.';
       }
 
       ScaffoldMessenger.of(

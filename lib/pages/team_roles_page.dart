@@ -106,6 +106,23 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
     });
   }
 
+  List<Map<String, dynamic>> _sortedRoles({required bool isActive}) {
+    final roles = _roles.where((role) => _isActiveRole(role) == isActive);
+
+    return List<Map<String, dynamic>>.from(roles)..sort((a, b) {
+      final orderCompare = _displayOrderFor(a).compareTo(_displayOrderFor(b));
+
+      if (orderCompare != 0) {
+        return orderCompare;
+      }
+
+      final aName = a['role_name']?.toString().toLowerCase() ?? '';
+      final bName = b['role_name']?.toString().toLowerCase() ?? '';
+
+      return aName.compareTo(bName);
+    });
+  }
+
   bool _isActiveRole(Map<String, dynamic> role) {
     return role['is_active'] == true;
   }
@@ -157,11 +174,13 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
   }
 
   int _nextDisplayOrder() {
-    if (_roles.isEmpty) {
+    final activeRoles = _sortedRoles(isActive: true);
+
+    if (activeRoles.isEmpty) {
       return 1;
     }
 
-    final maxDisplayOrder = _roles.map(_displayOrderFor).fold<int>(0, (
+    final maxDisplayOrder = activeRoles.map(_displayOrderFor).fold<int>(0, (
       currentMax,
       order,
     ) {
@@ -380,15 +399,43 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
               });
 
               try {
-                await supabase
-                    .from('team_roles')
-                    .update({
+                final requestedPosition = int.parse(displayOrder.trim());
+                final sectionRoles = _sortedRoles(
+                  isActive: _isActiveRole(role),
+                );
+                final reorderedRoles = List<Map<String, dynamic>>.from(
+                  sectionRoles,
+                )..removeWhere((item) => item['id'] == role['id']);
+                final targetIndex = (requestedPosition - 1).clamp(
+                  0,
+                  reorderedRoles.length,
+                );
+                reorderedRoles.insert(targetIndex, {
+                  ...role,
+                  'role_name': roleName.trim(),
+                  'quantity': quantity,
+                });
+                final updatedAt = DateTime.now().toUtc().toIso8601String();
+
+                for (var index = 0; index < reorderedRoles.length; index++) {
+                  final updatedRole = reorderedRoles[index];
+                  final updates = <String, dynamic>{
+                    'display_order': index + 1,
+                    'updated_at': updatedAt,
+                  };
+
+                  if (updatedRole['id'] == role['id']) {
+                    updates.addAll({
                       'role_name': roleName.trim(),
                       'quantity': quantity,
-                      'display_order': int.parse(displayOrder.trim()),
-                      'updated_at': DateTime.now().toUtc().toIso8601String(),
-                    })
-                    .eq('id', role['id']);
+                    });
+                  }
+
+                  await supabase
+                      .from('team_roles')
+                      .update(updates)
+                      .eq('id', updatedRole['id']);
+                }
 
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext, true);
@@ -552,10 +599,23 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
     required bool isActive,
   }) async {
     try {
+      final targetSectionRoles = _sortedRoles(
+        isActive: isActive,
+      ).where((item) => item['id'] != role['id']);
+      final nextDisplayOrder =
+          targetSectionRoles
+              .map(_displayOrderFor)
+              .fold<int>(
+                0,
+                (currentMax, order) => order > currentMax ? order : currentMax,
+              ) +
+          1;
+
       await supabase
           .from('team_roles')
           .update({
             'is_active': isActive,
+            'display_order': nextDisplayOrder,
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           })
           .eq('id', role['id']);
@@ -579,6 +639,52 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to update role: $e')));
+    }
+  }
+
+  Future<void> _moveRole(
+    Map<String, dynamic> role, {
+    required bool moveUp,
+  }) async {
+    final isActive = _isActiveRole(role);
+    final sectionRoles = _sortedRoles(isActive: isActive);
+    final currentIndex = sectionRoles.indexWhere(
+      (item) => item['id'] == role['id'],
+    );
+
+    if (currentIndex == -1) {
+      return;
+    }
+
+    final targetIndex = moveUp ? currentIndex - 1 : currentIndex + 1;
+
+    if (targetIndex < 0 || targetIndex >= sectionRoles.length) {
+      return;
+    }
+
+    final reorderedRoles = List<Map<String, dynamic>>.from(sectionRoles);
+    final movedRole = reorderedRoles.removeAt(currentIndex);
+    reorderedRoles.insert(targetIndex, movedRole);
+
+    try {
+      final updatedAt = DateTime.now().toUtc().toIso8601String();
+
+      for (var index = 0; index < reorderedRoles.length; index++) {
+        await supabase
+            .from('team_roles')
+            .update({'display_order': index + 1, 'updated_at': updatedAt})
+            .eq('id', reorderedRoles[index]['id']);
+      }
+
+      await _loadData();
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to reorder role: $e')));
     }
   }
 
@@ -649,6 +755,12 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
       case 'reactivate':
         await _setRoleActive(role, isActive: true);
         return;
+      case 'move_up':
+        await _moveRole(role, moveUp: true);
+        return;
+      case 'move_down':
+        await _moveRole(role, moveUp: false);
+        return;
       case 'delete':
         await _confirmDeleteRole(role);
         return;
@@ -657,6 +769,8 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
 
   Widget _buildRoleActions(Map<String, dynamic> role) {
     final isActive = _isActiveRole(role);
+    final sectionRoles = _sortedRoles(isActive: isActive);
+    final index = sectionRoles.indexWhere((item) => item['id'] == role['id']);
 
     return PopupMenuButton<String>(
       tooltip: 'Role actions',
@@ -666,6 +780,18 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
       itemBuilder: (context) {
         return [
           const PopupMenuItem(value: 'edit', child: Text('Edit')),
+          PopupMenuItem(
+            value: index > 0 ? 'move_up' : null,
+            enabled: index > 0,
+            child: const Text('Move Up'),
+          ),
+          PopupMenuItem(
+            value: index >= 0 && index < sectionRoles.length - 1
+                ? 'move_down'
+                : null,
+            enabled: index >= 0 && index < sectionRoles.length - 1,
+            child: const Text('Move Down'),
+          ),
           PopupMenuItem(
             value: isActive ? 'deactivate' : 'reactivate',
             child: Text(isActive ? 'Deactivate' : 'Reactivate'),
@@ -746,18 +872,53 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
   }
 
   Widget _buildMobileRoleList() {
-    return ListView.builder(
+    final activeRoles = _sortedRoles(isActive: true);
+    final inactiveRoles = _sortedRoles(isActive: false);
+
+    return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: _roles.length,
-      itemBuilder: (context, index) {
-        return _buildRoleCard(_roles[index]);
-      },
+      children: [
+        _buildRoleSectionTitle('Active Roles', activeRoles.length),
+        if (activeRoles.isEmpty)
+          _buildSectionEmptyState('No active roles.')
+        else
+          ...activeRoles.map(_buildRoleCard),
+        const SizedBox(height: 16),
+        _buildRoleSectionTitle('Inactive Roles', inactiveRoles.length),
+        if (inactiveRoles.isEmpty)
+          _buildSectionEmptyState('No inactive roles.')
+        else
+          ...inactiveRoles.map(_buildRoleCard),
+      ],
     );
   }
 
-  Widget _buildDesktopRoleList() {
+  Widget _buildRoleSectionTitle(String title, int count) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 8),
+      child: Text(
+        '$title ($count)',
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _buildSectionEmptyState(String message) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(message),
+    );
+  }
+
+  Widget _buildDesktopRoleTable(List<Map<String, dynamic>> roles) {
+    if (roles.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return SingleChildScrollView(
-      physics: const AlwaysScrollableScrollPhysics(),
+      scrollDirection: Axis.horizontal,
       child: DataTable(
         columns: const [
           DataColumn(label: Text('Order')),
@@ -767,7 +928,7 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
           DataColumn(label: Text('Status')),
           DataColumn(label: Text('Actions')),
         ],
-        rows: _roles.map((role) {
+        rows: roles.map((role) {
           final isActive = _isActiveRole(role);
           final labels = _generatedLabelsFor(role);
 
@@ -790,6 +951,28 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
           );
         }).toList(),
       ),
+    );
+  }
+
+  Widget _buildDesktopRoleList() {
+    final activeRoles = _sortedRoles(isActive: true);
+    final inactiveRoles = _sortedRoles(isActive: false);
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        _buildRoleSectionTitle('Active Roles', activeRoles.length),
+        if (activeRoles.isEmpty)
+          _buildSectionEmptyState('No active roles.')
+        else
+          _buildDesktopRoleTable(activeRoles),
+        const SizedBox(height: 20),
+        _buildRoleSectionTitle('Inactive Roles', inactiveRoles.length),
+        if (inactiveRoles.isEmpty)
+          _buildSectionEmptyState('No inactive roles.')
+        else
+          _buildDesktopRoleTable(inactiveRoles),
+      ],
     );
   }
 

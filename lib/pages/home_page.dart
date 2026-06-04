@@ -7,6 +7,7 @@ import 'my_schedule_page.dart';
 import 'my_availability_page.dart';
 import 'auth_page.dart';
 import 'pending_assignments_page.dart';
+import 'admin_dashboard_page.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -196,6 +197,23 @@ class _HomePageState extends State<HomePage> {
                           );
                         },
                       ),
+
+                      if (isAdmin)
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.admin_panel_settings),
+
+                          label: const Text('Admin Dashboard'),
+
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+
+                              MaterialPageRoute(
+                                builder: (_) => const AdminDashboardPage(),
+                              ),
+                            );
+                          },
+                        ),
                     ],
                   ),
 

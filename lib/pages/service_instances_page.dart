@@ -140,6 +140,66 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
     }
   }
 
+  Future<void> _cleanDuplicateSlots(Map<String, dynamic> instance) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Clean Duplicate Slots'),
+          content: const Text(
+            'Remove duplicate slots while keeping the highest-priority copy?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Clean'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      final response = await supabase.rpc(
+        'cleanup_duplicate_service_slots',
+        params: {'p_service_instance_id': instance['id']},
+      );
+      final deletedCount = response is int
+          ? response
+          : int.tryParse(response?.toString() ?? '') ?? 0;
+
+      await _loadInstances();
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed $deletedCount duplicate slots')),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to clean duplicate slots: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -171,6 +231,11 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
                               onSelected: (action) {
                                 if (action == 'regenerate_slots') {
                                   _regenerateSlots(instance);
+                                  return;
+                                }
+
+                                if (action == 'clean_duplicate_slots') {
+                                  _cleanDuplicateSlots(instance);
                                 }
                               },
                               itemBuilder: (context) {
@@ -178,6 +243,10 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
                                   PopupMenuItem(
                                     value: 'regenerate_slots',
                                     child: Text('Regenerate Slots'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'clean_duplicate_slots',
+                                    child: Text('Clean Duplicate Slots'),
                                   ),
                                 ];
                               },
