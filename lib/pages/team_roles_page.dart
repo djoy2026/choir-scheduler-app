@@ -173,184 +173,178 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
 
   Future<void> _showAddRoleDialog() async {
     final formKey = GlobalKey<FormState>();
-    final roleNameController = TextEditingController();
+    var roleName = '';
     var quantity = 1;
     var isSaving = false;
 
-    try {
-      final wasSaved = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              final previewLabels = _generatedLabels(
-                roleNameController.text,
-                quantity,
-              );
-              final previewText = previewLabels.isEmpty
-                  ? 'Enter a role name to preview slots.'
-                  : previewLabels.join(', ');
+    final wasSaved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final previewLabels = _generatedLabels(roleName, quantity);
+            final previewText = previewLabels.isEmpty
+                ? 'Enter a role name to preview slots.'
+                : previewLabels.join(', ');
 
-              Future<void> saveRole() async {
-                if (isSaving) {
-                  return;
+            Future<void> saveRole() async {
+              if (isSaving) {
+                return;
+              }
+
+              if (!(formKey.currentState?.validate() ?? false)) {
+                return;
+              }
+
+              setDialogState(() {
+                isSaving = true;
+              });
+
+              try {
+                await supabase.from('team_roles').insert({
+                  'team_id': widget.teamId,
+                  'role_name': roleName.trim(),
+                  'quantity': quantity,
+                  'display_order': _nextDisplayOrder(),
+                  'is_active': true,
+                });
+
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext, true);
                 }
-
-                if (!(formKey.currentState?.validate() ?? false)) {
+              } catch (e) {
+                if (!dialogContext.mounted) {
                   return;
                 }
 
                 setDialogState(() {
-                  isSaving = true;
+                  isSaving = false;
                 });
 
-                try {
-                  await supabase.from('team_roles').insert({
-                    'team_id': widget.teamId,
-                    'role_name': roleNameController.text.trim(),
-                    'quantity': quantity,
-                    'display_order': _nextDisplayOrder(),
-                    'is_active': true,
-                  });
-
-                  if (dialogContext.mounted) {
-                    Navigator.pop(dialogContext, true);
-                  }
-                } catch (e) {
-                  if (!dialogContext.mounted) {
-                    return;
-                  }
-
-                  setDialogState(() {
-                    isSaving = false;
-                  });
-
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    SnackBar(content: Text('Failed to save role: $e')),
-                  );
-                }
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(content: Text('Failed to save role: $e')),
+                );
               }
+            }
 
-              return AlertDialog(
-                title: const Text('Add Role'),
-                content: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  child: Form(
-                    key: formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TextFormField(
-                          controller: roleNameController,
-                          autofocus: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Role Name',
+            return AlertDialog(
+              title: const Text('Add Role'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextFormField(
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Role Name',
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                        validator: (value) {
+                          if ((value ?? '').trim().isEmpty) {
+                            return 'Enter a role name';
+                          }
+
+                          return null;
+                        },
+                        onChanged: (value) {
+                          setDialogState(() {
+                            roleName = value;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Quantity',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
                           ),
-                          textCapitalization: TextCapitalization.words,
-                          validator: (value) {
-                            if ((value ?? '').trim().isEmpty) {
-                              return 'Enter a role name';
-                            }
-
-                            return null;
-                          },
-                          onChanged: (_) {
-                            setDialogState(() {});
-                          },
-                        ),
-                        const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'Quantity',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
+                          IconButton(
+                            tooltip: 'Decrease quantity',
+                            onPressed: quantity <= _minQuantity || isSaving
+                                ? null
+                                : () {
+                                    setDialogState(() {
+                                      quantity--;
+                                    });
+                                  },
+                            icon: const Icon(Icons.remove_circle_outline),
+                          ),
+                          SizedBox(
+                            width: 32,
+                            child: Text(
+                              '$quantity',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium,
                             ),
-                            IconButton(
-                              tooltip: 'Decrease quantity',
-                              onPressed: quantity <= _minQuantity || isSaving
-                                  ? null
-                                  : () {
-                                      setDialogState(() {
-                                        quantity--;
-                                      });
-                                    },
-                              icon: const Icon(Icons.remove_circle_outline),
-                            ),
-                            SizedBox(
-                              width: 32,
-                              child: Text(
-                                '$quantity',
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Increase quantity',
-                              onPressed: quantity >= _maxQuantity || isSaving
-                                  ? null
-                                  : () {
-                                      setDialogState(() {
-                                        quantity++;
-                                      });
-                                    },
-                              icon: const Icon(Icons.add_circle_outline),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Generated slot preview',
-                          style: Theme.of(context).textTheme.labelLarge,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(previewText),
-                      ],
-                    ),
+                          ),
+                          IconButton(
+                            tooltip: 'Increase quantity',
+                            onPressed: quantity >= _maxQuantity || isSaving
+                                ? null
+                                : () {
+                                    setDialogState(() {
+                                      quantity++;
+                                    });
+                                  },
+                            icon: const Icon(Icons.add_circle_outline),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Generated slot preview',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(previewText),
+                    ],
                   ),
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: isSaving
-                        ? null
-                        : () {
-                            Navigator.pop(dialogContext, false);
-                          },
-                    child: const Text('Cancel'),
-                  ),
-                  ElevatedButton(
-                    onPressed: isSaving ? null : saveRole,
-                    child: isSaving
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Save'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSaving
+                      ? null
+                      : () {
+                          Navigator.pop(dialogContext, false);
+                        },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSaving ? null : saveRole,
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
 
-      if (wasSaved == true) {
-        await _loadData();
+    if (wasSaved == true) {
+      await _loadData();
 
-        if (!mounted) {
-          return;
-        }
-
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Role added')));
+      if (!mounted) {
+        return;
       }
-    } finally {
-      roleNameController.dispose();
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Role added')));
     }
   }
 
