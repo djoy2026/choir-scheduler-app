@@ -582,9 +582,31 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
     if (_services.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        children: const [
-          SizedBox(height: 160),
-          Center(child: Text('No services scheduled for this month.')),
+        children: [
+          const SizedBox(height: 150),
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.calendar_month,
+                  size: 48,
+                  color: Colors.grey.shade500,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'No services scheduled',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Services for this month will appear here.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey.shade700),
+                ),
+              ],
+            ),
+          ),
         ],
       );
     }

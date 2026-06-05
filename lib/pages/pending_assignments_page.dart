@@ -232,7 +232,31 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
             : _message != null
             ? Center(child: Text(_message!))
             : _assignments.isEmpty
-            ? const Center(child: Text('No pending assignments.'))
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.assignment_turned_in,
+                      size: 48,
+                      color: Colors.grey.shade500,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No upcoming assignments',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'You are all caught up.',
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
+                  ],
+                ),
+              )
             : ListView.builder(
                 itemCount: _assignments.length,
 

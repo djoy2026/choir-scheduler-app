@@ -54,11 +54,17 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
         _services = List<Map<String, dynamic>>.from(response);
       });
     } catch (e) {
-      debugPrint('Load services error: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to load availability.')),
+      );
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -106,22 +112,22 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Availability updated')));
-    } on PostgrestException catch (e) {
-      debugPrint('Availability save failed: ${e.message}');
-
+    } on PostgrestException {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to update availability. Please try again.'),
+        ),
+      );
     } catch (e) {
-      debugPrint('Availability save failed: $e');
-
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to update availability. Please try again.'),
+        ),
+      );
     }
   }
 
@@ -133,7 +139,29 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _services.isEmpty
-          ? const Center(child: Text('No upcoming services'))
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.event_available,
+                    size: 48,
+                    color: Colors.grey.shade500,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No upcoming services',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Availability options will appear when services are scheduled.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
+                ],
+              ),
+            )
           : RefreshIndicator(
               onRefresh: _loadServices,
 

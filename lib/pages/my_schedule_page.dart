@@ -35,8 +35,6 @@ class _MySchedulePageState extends State<MySchedulePage> {
         throw Exception('User not logged in');
       }
 
-      debugPrint('CURRENT USER ID: ${user.id}');
-
       final response = await supabase
           .from('service_slots')
           .select('''
@@ -57,14 +55,10 @@ class _MySchedulePageState extends State<MySchedulePage> {
           .eq('assigned_user_id', user.id)
           .eq('slot_status', 'taken');
 
-      debugPrint('MY SCHEDULE RESPONSE: $response');
-
       setState(() {
         _schedule = List<Map<String, dynamic>>.from(response);
       });
     } catch (e) {
-      debugPrint('MY SCHEDULE ERROR: $e');
-
       setState(() {
         _message = 'Failed to load schedule: $e';
       });
@@ -159,7 +153,32 @@ class _MySchedulePageState extends State<MySchedulePage> {
             : _message != null
             ? Center(child: Text(_message!))
             : _schedule.isEmpty
-            ? const Center(child: Text('No upcoming services.'))
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.event_available,
+                      size: 48,
+                      color: Colors.grey.shade500,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No scheduled services',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Confirmed assignments will appear here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
+                  ],
+                ),
+              )
             : ListView.builder(
                 itemCount: _schedule.length,
                 itemBuilder: (context, index) {

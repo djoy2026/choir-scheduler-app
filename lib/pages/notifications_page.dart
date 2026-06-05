@@ -245,7 +245,16 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     color: Colors.grey.shade500,
                   ),
                   const SizedBox(height: 12),
-                  const Text('No notifications yet'),
+                  const Text(
+                    'No notifications yet',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'New assignments and updates will appear here.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
                 ],
               ),
             )

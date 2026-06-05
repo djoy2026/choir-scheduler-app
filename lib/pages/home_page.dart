@@ -9,6 +9,8 @@ import 'auth_page.dart';
 import 'pending_assignments_page.dart';
 import 'admin_dashboard_page.dart';
 import 'notifications_page.dart';
+import 'settings_page.dart';
+import '../theme/app_branding.dart';
 import '../utils/time_format.dart';
 
 final supabase = Supabase.instance.client;
@@ -41,6 +43,7 @@ class _HomePageState extends State<HomePage>
   Map<String, dynamic>? _nextServiceSlot;
   Map<String, int> _ministryUpcomingCounts = {};
   int _upcomingServicesCount = 0;
+  int _openSlotsCount = 0;
   int _pendingAssignmentsCount = 0;
   int _unreadNotificationCount = 0;
   late final AnimationController _bellPulseController;
@@ -109,6 +112,8 @@ class _HomePageState extends State<HomePage>
           .select()
           .eq('id', user.id)
           .single();
+      final isAdmin =
+          profileResponse['role']?.toString().trim().toLowerCase() == 'admin';
 
       final ministriesResponse = await supabase
           .from('ministries')
@@ -125,7 +130,14 @@ class _HomePageState extends State<HomePage>
 
       final upcomingServicesResponse = await supabase
           .from('service_instances')
-          .select('id, ministry_id')
+          .select('''
+            id,
+            ministry_id,
+            service_slots (
+              id,
+              slot_status
+            )
+          ''')
           .gte('service_date', today);
 
       final pendingAssignmentsResponse = await supabase
@@ -133,6 +145,18 @@ class _HomePageState extends State<HomePage>
           .select('id')
           .eq('assigned_user_id', user.id)
           .eq('slot_status', 'pending');
+
+      final volunteerUpcomingResponse = await supabase
+          .from('service_slots')
+          .select('''
+            id,
+            service_instances!inner (
+              service_date
+            )
+          ''')
+          .eq('assigned_user_id', user.id)
+          .inFilter('slot_status', ['pending', 'taken'])
+          .gte('service_instances.service_date', today);
 
       final nextServiceResponse = await supabase
           .from('service_slots')
@@ -163,9 +187,23 @@ class _HomePageState extends State<HomePage>
         upcomingServicesResponse,
       );
       final ministryCounts = <String, int>{};
+      var openSlotsCount = 0;
+      var pendingSlotsCount = 0;
 
       for (final service in upcomingServices) {
         final ministryId = service['ministry_id']?.toString();
+        final slots = List<Map<String, dynamic>>.from(
+          service['service_slots'] ?? const [],
+        );
+
+        openSlotsCount += slots.where((slot) {
+          final status = slot['slot_status']?.toString().trim().toLowerCase();
+          return status == 'open';
+        }).length;
+        pendingSlotsCount += slots.where((slot) {
+          final status = slot['slot_status']?.toString().trim().toLowerCase();
+          return status == 'pending';
+        }).length;
 
         if (ministryId == null || ministryId.isEmpty) {
           continue;
@@ -177,8 +215,11 @@ class _HomePageState extends State<HomePage>
       setState(() {
         _profile = profileResponse;
         _ministries = ministriesResponse;
-        _upcomingServicesCount = upcomingServices.length;
-        _pendingAssignmentsCount = pendingAssignmentsResponse.length;
+        _upcomingServicesCount = volunteerUpcomingResponse.length;
+        _openSlotsCount = openSlotsCount;
+        _pendingAssignmentsCount = isAdmin
+            ? pendingSlotsCount
+            : pendingAssignmentsResponse.length;
         _unreadNotificationCount = unreadNotificationsResponse.length;
         _ministryUpcomingCounts = ministryCounts;
         _nextServiceSlot = nextServiceResponse.isEmpty
@@ -274,6 +315,25 @@ class _HomePageState extends State<HomePage>
     return 'Good Evening';
   }
 
+  String _titleCaseName(String value) {
+    final trimmed = value.trim();
+
+    if (trimmed.isEmpty) {
+      return 'User';
+    }
+
+    return trimmed
+        .split(RegExp(r'\s+'))
+        .map((part) {
+          if (part.isEmpty) {
+            return part;
+          }
+
+          return '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}';
+        })
+        .join(' ');
+  }
+
   List<Map<String, dynamic>> _sortedMinistries() {
     final sortedMinistries = List<Map<String, dynamic>>.from(_ministries);
 
@@ -311,14 +371,32 @@ class _HomePageState extends State<HomePage>
     }
 
     if (normalizedName.contains('kids')) {
-      return Icons.celebration;
-    }
-
-    if (normalizedName.contains('main')) {
       return Icons.music_note;
     }
 
+    if (normalizedName.contains('main')) {
+      return Icons.mic;
+    }
+
     return Icons.groups;
+  }
+
+  String _ministryDisplayName(String name) {
+    if (name.contains('Children\'s Ministry Live Schedule')) {
+      return 'Children\'s Ministry';
+    }
+
+    return name;
+  }
+
+  String _ministrySubtitle(Map<String, dynamic> ministry) {
+    final ministryName = ministry['name']?.toString() ?? '';
+
+    if (ministryName.contains('Children\'s Ministry Live Schedule')) {
+      return 'Live Schedule • Classroom volunteer scheduling';
+    }
+
+    return ministry['description']?.toString() ?? '';
   }
 
   String _serviceName(Map<String, dynamic> service) {
@@ -334,7 +412,7 @@ class _HomePageState extends State<HomePage>
 
   String _assignmentStatus(String? status) {
     if (status == 'pending') {
-      return 'Pending confirmation';
+      return 'Pending';
     }
 
     if (status == 'taken') {
@@ -344,16 +422,34 @@ class _HomePageState extends State<HomePage>
     return 'Assigned';
   }
 
-  Widget _buildHeroCard(String firstName) {
+  Widget _buildHeroCard(String firstName, {required bool isAdmin}) {
+    final displayName = isAdmin
+        ? '${_titleCaseName(firstName)} (Admin)'
+        : _titleCaseName(firstName);
+    final subtitle = isAdmin
+        ? 'Manage schedules, assignments and volunteers'
+        : 'Welcome back to Choir Scheduler';
+    final stats = isAdmin
+        ? [
+            _buildHeroStat('Open Slots', _openSlotsCount),
+            _buildHeroStat('Pending', _pendingAssignmentsCount),
+            _buildHeroStat('Unread', _unreadNotificationCount),
+          ]
+        : [
+            _buildHeroStat('Upcoming', _upcomingServicesCount),
+            _buildHeroStat('Pending', _pendingAssignmentsCount),
+            _buildHeroStat('Unread', _unreadNotificationCount),
+          ];
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
+        borderRadius: BorderRadius.circular(18),
+        gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Colors.deepPurple.shade500, Colors.purple.shade300],
+          colors: [AppBranding.primaryDark, AppBranding.primary],
         ),
         boxShadow: [
           BoxShadow(
@@ -371,29 +467,31 @@ class _HomePageState extends State<HomePage>
             style: TextStyle(
               color: Colors.white.withValues(alpha: .82),
               fontWeight: FontWeight.w600,
+              fontSize: 13,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
-            firstName,
+            displayName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
+              fontSize: 23,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 20),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _buildHeroStat('Services', _upcomingServicesCount),
-              _buildHeroStat('Pending', _pendingAssignmentsCount),
-              _buildHeroStat('Unread', _unreadNotificationCount),
-            ],
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: .78),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
           ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: stats),
         ],
       ),
     );
@@ -401,8 +499,8 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildHeroStat(String label, int value) {
     return Container(
-      width: 92,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      width: 78,
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: .16),
         borderRadius: BorderRadius.circular(14),
@@ -415,8 +513,8 @@ class _HomePageState extends State<HomePage>
             value.toString(),
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 2),
@@ -424,7 +522,7 @@ class _HomePageState extends State<HomePage>
             label,
             style: TextStyle(
               color: Colors.white.withValues(alpha: .82),
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -438,7 +536,7 @@ class _HomePageState extends State<HomePage>
       padding: const EdgeInsets.only(bottom: 12),
       child: Text(
         title,
-        style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -525,7 +623,7 @@ class _HomePageState extends State<HomePage>
                 action.label,
                 style: const TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -609,7 +707,7 @@ class _HomePageState extends State<HomePage>
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 18,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -630,7 +728,7 @@ class _HomePageState extends State<HomePage>
           const SizedBox(height: 8),
           _buildNextServiceDetail(Icons.badge, roleName),
           const SizedBox(height: 8),
-          _buildNextServiceDetail(Icons.verified, status),
+          _buildStatusChip(status),
         ],
       ),
     );
@@ -638,17 +736,22 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildEmptyNextServiceCard() {
     return _buildDashboardCard(
-      child: Row(
-        children: [
-          Icon(Icons.event_busy, color: Colors.grey.shade600),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Text(
-              'No upcoming assigned services',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.event_busy, color: Colors.grey.shade600, size: 34),
+              const SizedBox(height: 10),
+              const Text(
+                'No upcoming assigned services',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -667,6 +770,37 @@ class _HomePageState extends State<HomePage>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildStatusChip(String status) {
+    final normalizedStatus = status.toLowerCase();
+    final color = normalizedStatus.contains('confirmed')
+        ? Colors.green
+        : normalizedStatus.contains('pending')
+        ? Colors.amber
+        : normalizedStatus.contains('declined')
+        ? Colors.red
+        : Colors.grey;
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.shade100,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.shade300),
+        ),
+        child: Text(
+          status,
+          style: TextStyle(
+            color: color.shade900,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
     );
   }
 
@@ -691,6 +825,8 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildMinistryCard(Map<String, dynamic> ministry) {
     final ministryName = ministry['name']?.toString() ?? '';
+    final displayName = _ministryDisplayName(ministryName);
+    final subtitle = _ministrySubtitle(ministry);
     final ministryId = ministry['id']?.toString() ?? '';
     final upcomingCount = _ministryUpcomingCounts[ministryId] ?? 0;
 
@@ -718,12 +854,12 @@ class _HomePageState extends State<HomePage>
                   width: 46,
                   height: 46,
                   decoration: BoxDecoration(
-                    color: Colors.deepPurple.shade50,
+                    color: AppBranding.primaryLight,
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Icon(
                     _ministryIcon(ministryName),
-                    color: Colors.deepPurple,
+                    color: AppBranding.primary,
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -732,33 +868,36 @@ class _HomePageState extends State<HomePage>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        ministryName,
-                        maxLines: 1,
+                        displayName,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      if ((ministry['description'] ?? '').toString().isNotEmpty)
+                      const SizedBox(height: 5),
+                      Text(
+                        '$upcomingCount Upcoming ${upcomingCount == 1 ? 'Service' : 'Services'}',
+                        style: TextStyle(
+                          color: AppBranding.primary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.only(top: 7),
                           child: Text(
-                            ministry['description'],
+                            subtitle,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: Colors.grey.shade700),
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '$upcomingCount upcoming ${upcomingCount == 1 ? 'service' : 'services'}',
-                        style: TextStyle(
-                          color: Colors.deepPurple.shade600,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -860,6 +999,13 @@ class _HomePageState extends State<HomePage>
             tooltip: 'Notifications',
           ),
           IconButton(
+            onPressed: () {
+              _openPage(const SettingsPage());
+            },
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+          ),
+          IconButton(
             onPressed: _logout,
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',
@@ -873,7 +1019,7 @@ class _HomePageState extends State<HomePage>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Colors.deepPurple.shade50,
+              AppBranding.primaryLight,
               Colors.purple.shade50,
               Colors.grey.shade50,
             ],
@@ -890,7 +1036,7 @@ class _HomePageState extends State<HomePage>
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
                     children: [
-                      _buildHeroCard(firstName),
+                      _buildHeroCard(firstName, isAdmin: isAdmin),
                       const SizedBox(height: 24),
                       _buildSectionHeader('Quick Actions'),
                       _buildActionGrid(isAdmin),
