@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/time_format.dart';
+import '../utils/ui_helpers.dart';
+
 final supabase = Supabase.instance.client;
 
 class MyAvailabilityPage extends StatefulWidget {
@@ -80,72 +83,46 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
       if (user == null) return;
 
       final serviceId = service['id'];
+      final shouldMarkUnavailable = !_isUnavailable(service);
 
-      final existing = await supabase
-          .from('service_availability')
-          .select()
-          .eq('service_instance_id', serviceId)
-          .eq('user_id', user.id);
-
-      if (existing.isNotEmpty) {
+      if (shouldMarkUnavailable) {
+        await supabase.from('service_availability').upsert({
+          'service_instance_id': serviceId,
+          'user_id': user.id,
+          'availability_status': 'unavailable',
+        }, onConflict: 'user_id,service_instance_id');
+      } else {
         await supabase
             .from('service_availability')
             .delete()
             .eq('service_instance_id', serviceId)
             .eq('user_id', user.id);
-      } else {
-        await supabase.from('service_availability').insert({
-          'service_instance_id': serviceId,
-          'user_id': user.id,
-          'availability_status': 'unavailable',
-        });
       }
 
-      setState(() {
-        final serviceIndex = _services.indexWhere(
-          (service) => service['id'] == serviceId,
-        );
-
-        if (serviceIndex != -1) {
-          final availability = _services[serviceIndex]['service_availability'];
-
-          if (existing.isNotEmpty) {
-            availability.removeWhere((item) => item['user_id'] == user.id);
-          } else {
-            availability.add({
-              'user_id': user.id,
-              'availability_status': 'unavailable',
-            });
-          }
-        }
-      });
+      await _loadServices();
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            existing.isNotEmpty ? 'Marked available' : 'Marked unavailable',
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Availability updated')));
+    } on PostgrestException catch (e) {
+      debugPrint('Availability save failed: ${e.message}');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     } catch (e) {
+      debugPrint('Availability save failed: $e');
+
       if (!mounted) return;
 
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
-  }
-
-  String _formatDate(String rawDate) {
-    final parts = rawDate.split('-');
-
-    if (parts.length != 3) {
-      return rawDate;
-    }
-
-    return '${parts[1]}/${parts[2]}/${parts[0]}';
   }
 
   @override
@@ -174,9 +151,11 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
 
                   final team = service['teams']?['name'] ?? '';
 
-                  return Card(
+                  return AccentCard(
+                    accentColor: unavailable
+                        ? Colors.red.shade500
+                        : Colors.green.shade500,
                     elevation: 3,
-
                     color: unavailable
                         ? Colors.red.shade50
                         : Colors.green.shade50,
@@ -194,11 +173,14 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
                       ),
 
                       title: Text(
-                        service['service_name'] ?? '',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
+                        formatServiceHeading(
+                          service['service_date']?.toString(),
+                          service['start_time']?.toString(),
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
+                        style: serviceTitleTextStyle,
                       ),
 
                       subtitle: Padding(
@@ -208,17 +190,14 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
 
                           children: [
-                            Text(
-                              '${_formatDate(service['service_date'])}'
-                              ' • ${service['start_time']}'
-                              ' - ${service['end_time']}',
-                            ),
+                            Text(team, style: mutedTextStyle(context)),
 
                             const SizedBox(height: 4),
 
-                            Text(team),
-
-                            Text(service['location'] ?? ''),
+                            Text(
+                              service['location'] ?? '',
+                              style: mutedTextStyle(context),
+                            ),
 
                             const SizedBox(height: 10),
 

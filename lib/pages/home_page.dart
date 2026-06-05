@@ -8,6 +8,7 @@ import 'my_availability_page.dart';
 import 'auth_page.dart';
 import 'pending_assignments_page.dart';
 import 'admin_dashboard_page.dart';
+import 'notifications_page.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -21,6 +22,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<dynamic> _ministries = [];
   Map<String, dynamic>? _profile;
+  int _unreadNotificationCount = 0;
 
   bool _isLoading = true;
 
@@ -51,9 +53,16 @@ class _HomePageState extends State<HomePage> {
           .select()
           .order('display_order');
 
+      final unreadNotificationsResponse = await supabase
+          .from('notifications')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('is_read', false);
+
       setState(() {
         _profile = profileResponse;
         _ministries = ministriesResponse;
+        _unreadNotificationCount = unreadNotificationsResponse.length;
       });
     } catch (e) {
       setState(() {
@@ -85,6 +94,42 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _refreshUnreadNotificationCount() async {
+    try {
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        return;
+      }
+
+      final response = await supabase
+          .from('notifications')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('is_read', false);
+
+      if (!mounted) return;
+
+      setState(() {
+        _unreadNotificationCount = response.length;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _unreadNotificationCount = 0;
+      });
+    }
+  }
+
+  Future<void> _openPage(Widget page) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+
+    if (!mounted) return;
+
+    await _refreshUnreadNotificationCount();
+  }
+
   @override
   Widget build(BuildContext context) {
     final firstName = _profile?['first_name'] ?? 'User';
@@ -97,6 +142,17 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Choir Scheduler'),
         actions: [
+          IconButton(
+            onPressed: () {
+              _openPage(const NotificationsPage());
+            },
+            icon: Badge.count(
+              count: _unreadNotificationCount,
+              isLabelVisible: _unreadNotificationCount > 0,
+              child: const Icon(Icons.notifications),
+            ),
+            tooltip: 'Notifications',
+          ),
           IconButton(
             onPressed: _logout,
             icon: const Icon(Icons.logout),
@@ -140,13 +196,7 @@ class _HomePageState extends State<HomePage> {
                         label: const Text('Monthly'),
 
                         onPressed: () {
-                          Navigator.push(
-                            context,
-
-                            MaterialPageRoute(
-                              builder: (_) => const MonthlySchedulePage(),
-                            ),
-                          );
+                          _openPage(const MonthlySchedulePage());
                         },
                       ),
 
@@ -156,13 +206,7 @@ class _HomePageState extends State<HomePage> {
                         label: const Text('My Schedule'),
 
                         onPressed: () {
-                          Navigator.push(
-                            context,
-
-                            MaterialPageRoute(
-                              builder: (_) => const MySchedulePage(),
-                            ),
-                          );
+                          _openPage(const MySchedulePage());
                         },
                       ),
 
@@ -172,13 +216,7 @@ class _HomePageState extends State<HomePage> {
                         label: const Text('Assignments'),
 
                         onPressed: () {
-                          Navigator.push(
-                            context,
-
-                            MaterialPageRoute(
-                              builder: (_) => const PendingAssignmentsPage(),
-                            ),
-                          );
+                          _openPage(const PendingAssignmentsPage());
                         },
                       ),
 
@@ -188,13 +226,7 @@ class _HomePageState extends State<HomePage> {
                         label: const Text('Availability'),
 
                         onPressed: () {
-                          Navigator.push(
-                            context,
-
-                            MaterialPageRoute(
-                              builder: (_) => const MyAvailabilityPage(),
-                            ),
-                          );
+                          _openPage(const MyAvailabilityPage());
                         },
                       ),
 
@@ -205,13 +237,7 @@ class _HomePageState extends State<HomePage> {
                           label: const Text('Admin Dashboard'),
 
                           onPressed: () {
-                            Navigator.push(
-                              context,
-
-                              MaterialPageRoute(
-                                builder: (_) => const AdminDashboardPage(),
-                              ),
-                            );
+                            _openPage(const AdminDashboardPage());
                           },
                         ),
                     ],
@@ -274,14 +300,10 @@ class _HomePageState extends State<HomePage> {
                                   trailing: const Icon(Icons.arrow_forward_ios),
 
                                   onTap: () {
-                                    Navigator.push(
-                                      context,
-
-                                      MaterialPageRoute(
-                                        builder: (_) => TeamsPage(
-                                          ministryId: ministry['id'],
-                                          ministryName: ministry['name'],
-                                        ),
+                                    _openPage(
+                                      TeamsPage(
+                                        ministryId: ministry['id'],
+                                        ministryName: ministry['name'],
                                       ),
                                     );
                                   },

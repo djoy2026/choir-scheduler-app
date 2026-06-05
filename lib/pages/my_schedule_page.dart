@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/time_format.dart';
+import '../utils/ui_helpers.dart';
+
 final supabase = Supabase.instance.client;
 
 class MySchedulePage extends StatefulWidget {
@@ -70,16 +73,6 @@ class _MySchedulePageState extends State<MySchedulePage> {
         _isLoading = false;
       });
     }
-  }
-
-  String _formatDate(String rawDate) {
-    final parts = rawDate.split('-');
-
-    if (parts.length != 3) {
-      return rawDate;
-    }
-
-    return '${parts[1]}/${parts[2]}/${parts[0]}';
   }
 
   bool _hasConflict(Map<String, dynamic> currentSlot) {
@@ -184,20 +177,30 @@ class _MySchedulePageState extends State<MySchedulePage> {
 
                   final hasConflict = _hasConflict(slot);
 
-                  return Card(
+                  return AccentCard(
+                    accentColor: hasConflict
+                        ? Colors.red.shade500
+                        : Colors.green.shade500,
                     color: hasConflict ? Colors.red.shade100 : Colors.white,
                     child: ListTile(
-                      title: Text(service['service_name'] ?? ''),
+                      title: Text(
+                        formatServiceHeading(
+                          service['service_date']?.toString(),
+                          service['start_time']?.toString(),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
+                        style: serviceTitleTextStyle,
+                      ),
                       subtitle: Text(
-                        '${_formatDate(service['service_date'])}'
-                        ' • ${service['start_time']}'
-                        ' - ${service['end_time']}\n'
-                        '${slot['role_name'] ?? slot['slot_name']}\n'
                         '$ministry'
                         '${ministry.isNotEmpty && team.isNotEmpty ? ' • ' : ''}'
                         '$team\n'
-                        '${service['location'] ?? ''}'
+                        '${service['location'] ?? ''}\n'
+                        '${slot['role_name'] ?? slot['slot_name']}'
                         '${hasConflict ? '\n⚠️ Conflict detected' : ''}',
+                        style: mutedTextStyle(context),
                       ),
                       leading: Icon(
                         hasConflict ? Icons.warning : Icons.event_available,

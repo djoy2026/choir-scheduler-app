@@ -2,6 +2,9 @@ import 'service_slots_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/time_format.dart';
+import '../utils/ui_helpers.dart';
+
 final supabase = Supabase.instance.client;
 
 class ServiceInstancesPage extends StatefulWidget {
@@ -73,16 +76,6 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
         _isLoading = false;
       });
     }
-  }
-
-  String _formatDate(String rawDate) {
-    final parts = rawDate.split('-');
-
-    if (parts.length != 3) {
-      return rawDate;
-    }
-
-    return '${parts[1]}/${parts[2]}/${parts[0]}';
   }
 
   Future<void> _regenerateSlots(Map<String, dynamic> instance) async {
@@ -217,14 +210,23 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
                 itemBuilder: (context, index) {
                   final instance = _instances[index];
 
-                  return Card(
+                  return AccentCard(
+                    accentColor: Colors.amber.shade500,
                     child: ListTile(
-                      title: Text(instance['service_name'] ?? ''),
+                      title: Text(
+                        formatServiceHeading(
+                          instance['service_date']?.toString(),
+                          instance['start_time']?.toString(),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
+                        style: serviceTitleTextStyle,
+                      ),
                       subtitle: Text(
-                        '${_formatDate(instance['service_date'])}'
-                        ' • ${instance['start_time']}'
-                        ' - ${instance['end_time']}\n'
+                        '${widget.teamName}\n'
                         '${instance['location'] ?? ''}',
+                        style: mutedTextStyle(context),
                       ),
                       trailing: _isAdmin
                           ? PopupMenuButton<String>(
@@ -258,10 +260,12 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
                           MaterialPageRoute(
                             builder: (_) => ServiceSlotsPage(
                               serviceInstanceId: instance['id'],
-                              serviceTitle:
-                                  instance['service_name'] ?? 'Service',
-                              serviceDate: _formatDate(
-                                instance['service_date'],
+                              serviceTitle: formatServiceHeading(
+                                instance['service_date']?.toString(),
+                                instance['start_time']?.toString(),
+                              ),
+                              serviceDate: formatNumericDate(
+                                instance['service_date']?.toString(),
                               ),
                             ),
                           ),

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/time_format.dart';
+import '../utils/ui_helpers.dart';
+
 final supabase = Supabase.instance.client;
 
 class PendingAssignmentsPage extends StatefulWidget {
@@ -68,14 +71,85 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
     }
   }
 
-  String _formatDate(String rawDate) {
-    final parts = rawDate.split('-');
+  Future<bool> _isCurrentUserUnavailableForService(
+    String serviceInstanceId,
+  ) async {
+    final currentUser = supabase.auth.currentUser;
 
-    if (parts.length != 3) {
-      return rawDate;
+    if (currentUser == null) {
+      throw Exception('User not logged in');
     }
 
-    return '${parts[1]}/${parts[2]}/${parts[0]}';
+    final response = await supabase
+        .from('service_availability')
+        .select('id')
+        .eq('service_instance_id', serviceInstanceId)
+        .eq('user_id', currentUser.id)
+        .eq('availability_status', 'unavailable')
+        .limit(1);
+
+    return response.isNotEmpty;
+  }
+
+  Future<List<String>> _loadAdminUserIds() async {
+    final response = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('role', 'admin');
+
+    return List<Map<String, dynamic>>.from(
+      response,
+    ).map((profile) => profile['id'].toString()).toList();
+  }
+
+  Future<String> _currentVolunteerName() async {
+    final currentUser = supabase.auth.currentUser;
+
+    if (currentUser == null) {
+      return 'Unknown User';
+    }
+
+    final profile = await supabase
+        .from('profiles')
+        .select('first_name, last_name, email')
+        .eq('id', currentUser.id)
+        .single();
+
+    final name = '${profile['first_name'] ?? ''} ${profile['last_name'] ?? ''}'
+        .trim();
+
+    if (name.isNotEmpty) {
+      return name;
+    }
+
+    return profile['email']?.toString() ?? 'Unknown User';
+  }
+
+  Future<void> _notifyAdmins({
+    required String title,
+    required String message,
+    required String notificationType,
+    required String serviceInstanceId,
+  }) async {
+    final adminUserIds = await _loadAdminUserIds();
+
+    if (adminUserIds.isEmpty) {
+      return;
+    }
+
+    await supabase
+        .from('notifications')
+        .insert(
+          adminUserIds.map((userId) {
+            return {
+              'user_id': userId,
+              'title': title,
+              'message': message,
+              'notification_type': notificationType,
+              'related_service_instance_id': serviceInstanceId,
+            };
+          }).toList(),
+        );
   }
 
   Future<void> _respond(Map<String, dynamic> slot, bool accept) async {
@@ -84,6 +158,21 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
 
       if (currentUser == null) {
         throw Exception('User not logged in');
+      }
+
+      final service = slot['service_instances'];
+
+      if (accept && await _isCurrentUserUnavailableForService(service['id'])) {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'You marked yourself unavailable for this service. Change your availability before accepting.',
+            ),
+          ),
+        );
+        return;
       }
 
       await supabase
@@ -97,6 +186,19 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
           })
           .eq('id', slot['id']);
 
+      final volunteerName = await _currentVolunteerName();
+
+      await _notifyAdmins(
+        title: accept ? 'Assignment Accepted' : 'Assignment Declined',
+        message: accept
+            ? '$volunteerName accepted assignment.'
+            : '$volunteerName declined assignment.',
+        notificationType: accept
+            ? 'assignment_accepted'
+            : 'assignment_declined',
+        serviceInstanceId: service['id'],
+      );
+
       await _loadAssignments();
 
       if (!mounted) return;
@@ -109,9 +211,11 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to update assignment. Please try again.'),
+        ),
+      );
     }
   }
 
@@ -139,19 +243,26 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
 
                   final team = service['teams']?['name'] ?? '';
 
-                  return Card(
+                  return AccentCard(
+                    accentColor: Colors.blue.shade500,
                     color: Colors.blue.shade100,
-
                     child: ListTile(
-                      title: Text(service['service_name'] ?? ''),
+                      title: Text(
+                        formatServiceHeading(
+                          service['service_date']?.toString(),
+                          service['start_time']?.toString(),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
+                        style: serviceTitleTextStyle,
+                      ),
 
                       subtitle: Text(
-                        '${_formatDate(service['service_date'])}'
-                        ' • ${service['start_time']}'
-                        ' - ${service['end_time']}\n'
-                        '${slot['role_name'] ?? slot['slot_name']}\n'
                         '$team\n'
-                        '${service['location'] ?? ''}',
+                        '${service['location'] ?? ''}\n'
+                        '${slot['role_name'] ?? slot['slot_name']}',
+                        style: mutedTextStyle(context),
                       ),
 
                       trailing: Row(

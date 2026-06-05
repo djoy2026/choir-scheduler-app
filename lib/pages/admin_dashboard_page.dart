@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'service_slots_page.dart';
 import 'teams_page.dart';
+import '../utils/time_format.dart';
+import '../utils/ui_helpers.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -117,7 +119,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           .limit(20);
 
       final services = List<Map<String, dynamic>>.from(servicesResponse);
-      debugPrint('AdminDashboard services.length=${services.length}');
       final upcomingServices = <Map<String, dynamic>>[];
       var openSlotCount = 0;
       var pendingAssignmentCount = 0;
@@ -188,16 +189,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         });
       }
     }
-  }
-
-  String _formatDate(String rawDate) {
-    final parts = rawDate.split('-');
-
-    if (parts.length != 3) {
-      return rawDate;
-    }
-
-    return '${parts[1]}/${parts[2]}/${parts[0]}';
   }
 
   String _formatRefreshTime(DateTime? value) {
@@ -284,8 +275,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       MaterialPageRoute(
         builder: (_) => ServiceSlotsPage(
           serviceInstanceId: service['id'],
-          serviceTitle: service['service_name']?.toString() ?? 'Service',
-          serviceDate: _formatDate(service['service_date']?.toString() ?? ''),
+          serviceTitle: formatServiceHeading(
+            service['service_date']?.toString(),
+            service['start_time']?.toString(),
+          ),
+          serviceDate: formatNumericDate(service['service_date']?.toString()),
         ),
       ),
     );
@@ -408,7 +402,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return Column(
       children: _upcomingServices.take(10).map((service) {
         final team = service['teams'];
-        final ministry = service['ministries'];
         final openSlots = service['open_slot_count'] as int? ?? 0;
         final pendingSlots = service['pending_slot_count'] as int? ?? 0;
         final takenSlots = service['taken_slot_count'] as int? ?? 0;
@@ -423,7 +416,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           takenSlots: takenSlots,
         );
 
-        return Card(
+        return AccentCard(
+          accentColor: statusColor.shade600,
           color: statusColor.shade50,
           child: ListTile(
             leading: CircleAvatar(
@@ -431,11 +425,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               foregroundColor: statusColor.shade900,
               child: Icon(_serviceStatusIcon(openSlots, pendingSlots)),
             ),
-            title: Text(service['service_name']?.toString() ?? 'Service'),
+            title: Text(
+              formatServiceHeading(
+                service['service_date']?.toString(),
+                service['start_time']?.toString(),
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              softWrap: true,
+              style: serviceTitleTextStyle,
+            ),
             subtitle: Text(
-              '${_formatDate(service['service_date']?.toString() ?? '')}'
-              ' • ${service['start_time'] ?? ''}\n'
-              '${ministry?['name'] ?? ''} • ${team?['name'] ?? ''}',
+              '${team?['name'] ?? ''}\n'
+              '${service['location'] ?? ''}',
+              style: mutedTextStyle(context),
             ),
             trailing: Text(statusText),
             onTap: () {
@@ -521,13 +524,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         final service = slot['service_instances'];
         final assignedName = _assignedVolunteerName(slot);
 
-        return Card(
+        return AccentCard(
+          accentColor: Colors.blue.shade500,
           child: ListTile(
             title: Text(slot['role_name'] ?? slot['slot_name'] ?? ''),
             subtitle: Text(
               'Assigned to: $assignedName\n'
-              '${_formatDate(service?['service_date']?.toString() ?? '')}'
-              ' • ${service?['start_time'] ?? ''}',
+              '${formatServiceHeading(service?['service_date']?.toString(), service?['start_time']?.toString())}',
+              style: mutedTextStyle(context),
             ),
           ),
         );
@@ -576,23 +580,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               const SizedBox(height: 20),
               _buildSummaryGrid(),
               const SizedBox(height: 24),
-              Text(
-                'Quick Actions',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+              Text('Quick Actions', style: sectionHeaderTextStyle(context)),
               const SizedBox(height: 12),
               _buildQuickActions(),
               const SizedBox(height: 24),
-              Text(
-                'Upcoming Services',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+              Text('Upcoming Services', style: sectionHeaderTextStyle(context)),
               const SizedBox(height: 12),
               _buildOpenServicesList(),
               const SizedBox(height: 24),
               Text(
                 'Pending Assignments',
-                style: Theme.of(context).textTheme.titleLarge,
+                style: sectionHeaderTextStyle(context),
               ),
               const SizedBox(height: 12),
               _buildPendingAssignmentsList(),

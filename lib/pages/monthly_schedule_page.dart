@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'service_slots_page.dart';
+import '../utils/time_format.dart';
+import '../utils/ui_helpers.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -343,82 +345,11 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
     return '$hour:$minute:00';
   }
 
-  String _formatDate(String rawDate) {
-    final parts = rawDate.split('-');
-
-    if (parts.length != 3) {
-      return rawDate;
-    }
-
-    return '${parts[1]}/${parts[2]}/${parts[0]}';
-  }
-
-  DateTime? _parseDate(String? rawDate) {
-    if (rawDate == null || rawDate.isEmpty) {
-      return null;
-    }
-
-    return DateTime.tryParse(rawDate);
-  }
-
-  String _formatTime(String? rawTime) {
-    if (rawTime == null || rawTime.isEmpty) {
-      return '';
-    }
-
-    final parts = rawTime.split(':');
-
-    if (parts.length < 2) {
-      return rawTime;
-    }
-
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-
-    if (hour == null || minute == null) {
-      return rawTime;
-    }
-
-    final displayHour = hour > 12
-        ? hour - 12
-        : hour == 0
-        ? 12
-        : hour;
-    final period = hour >= 12 ? 'PM' : 'AM';
-
-    return '$displayHour:${minute.toString().padLeft(2, '0')} $period';
-  }
-
-  String _weekdayName(DateTime value) {
-    const weekdays = [
-      '',
-      'Monday',
-      'Tuesday',
-      'Wednesday',
-      'Thursday',
-      'Friday',
-      'Saturday',
-      'Sunday',
-    ];
-
-    return weekdays[value.weekday];
-  }
-
   String _serviceTitle(Map<String, dynamic> service) {
-    final rawName = service['service_name']?.toString() ?? 'Service';
-
-    if (!rawName.startsWith('Service ')) {
-      return rawName;
-    }
-
-    final serviceDate = _parseDate(service['service_date']?.toString());
-    final formattedTime = _formatTime(service['start_time']?.toString());
-
-    if (serviceDate == null || formattedTime.isEmpty) {
-      return rawName;
-    }
-
-    return '${_weekdayName(serviceDate)} $formattedTime Service';
+    return formatServiceHeading(
+      service['service_date']?.toString(),
+      service['start_time']?.toString(),
+    );
   }
 
   String _monthLabel(DateTime value) {
@@ -609,7 +540,7 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
         builder: (_) => ServiceSlotsPage(
           serviceInstanceId: service['id'],
           serviceTitle: _serviceTitle(service),
-          serviceDate: _formatDate(service['service_date'] ?? ''),
+          serviceDate: formatNumericDate(service['service_date']?.toString()),
         ),
       ),
     );
@@ -633,9 +564,7 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
           child: Text(
             _monthLabel(_selectedMonth),
             textAlign: TextAlign.center,
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+            style: sectionHeaderTextStyle(context),
           ),
         ),
         IconButton(
@@ -717,97 +646,115 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
         );
         final isExpanded = _expandedServiceIds.contains(serviceId);
 
-        return Card(
+        return AccentCard(
+          accentColor: healthColor.shade600,
           color: healthColor.shade50,
-          child: ExpansionTile(
-            key: PageStorageKey(serviceId),
-            initiallyExpanded: isExpanded,
-            onExpansionChanged: (expanded) {
-              setState(() {
-                if (expanded) {
-                  _expandedServiceIds.add(serviceId);
-                } else {
-                  _expandedServiceIds.remove(serviceId);
-                }
-              });
-            },
-            tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-            title: Text(
-              _serviceTitle(firstService),
-              softWrap: true,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHealthBadge(healthLabel, healthColor),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Open: $openCount | Pending: $pendingCount | Taken: $takenCount',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  if (_isAdmin) ...[
-                    const SizedBox(height: 4),
-                    Text('Unavailable: ${unavailableRows.length}'),
-                  ],
-                  const SizedBox(height: 6),
-                  Text(
-                    '${_formatDate(firstService['service_date'] ?? '')}'
-                    ' • ${_formatTime(firstService['start_time'])}'
-                    ' - ${_formatTime(firstService['end_time'])}',
-                  ),
-                  if (teamName.toString().isNotEmpty || location.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        '$teamName${location.isEmpty ? '' : ' • $location'}',
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            trailing: Text(
-              isExpanded ? '▲ Hide Roles' : '▼ Show Roles',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () {
-                    _openSlots(firstService);
-                  },
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Open Slots'),
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    if (isExpanded) {
+                      _expandedServiceIds.remove(serviceId);
+                    } else {
+                      _expandedServiceIds.add(serviceId);
+                    }
+                  });
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _serviceTitle(firstService),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
+                        style: serviceTitleTextStyle,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _buildHealthBadge(healthLabel, healthColor),
+                          _buildServiceCountChip(
+                            'Open',
+                            openCount,
+                            Colors.amber,
+                          ),
+                          _buildServiceCountChip(
+                            'Pending',
+                            pendingCount,
+                            Colors.blue,
+                          ),
+                          _buildServiceCountChip(
+                            'Taken',
+                            takenCount,
+                            Colors.green,
+                          ),
+                          if (_isAdmin)
+                            _buildServiceCountChip(
+                              'Unavailable',
+                              unavailableRows.length,
+                              Colors.red,
+                            ),
+                          _buildExpansionChip(isExpanded),
+                        ],
+                      ),
+                      if (teamName.toString().isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(teamName, style: mutedTextStyle(context)),
+                        ),
+                      if (location.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text(location, style: mutedTextStyle(context)),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-              if (slots.isEmpty)
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text('No slots have been generated yet.'),
-                  ),
-                )
-              else
-                ...slots.map(_buildSlotRow),
-              if (_isAdmin && unavailableRows.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Unavailable Volunteers',
-                    style: Theme.of(context).textTheme.labelLarge,
+              if (isExpanded)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            _openSlots(firstService);
+                          },
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('Open Slots'),
+                        ),
+                      ),
+                      if (slots.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 8),
+                          child: Text('No slots have been generated yet.'),
+                        )
+                      else
+                        ...slots.map(_buildSlotRow),
+                      if (_isAdmin && unavailableRows.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Unavailable Volunteers',
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 6),
+                        ...unavailableRows.map(_buildUnavailableRow),
+                      ],
+                    ],
                   ),
                 ),
-                const SizedBox(height: 6),
-                ...unavailableRows.map(_buildUnavailableRow),
-              ],
             ],
           ),
         );
@@ -827,28 +774,44 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: color.shade200),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _roleName(slot),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
                 ),
-                const SizedBox(height: 2),
-                Text(_volunteerName(slot)),
-              ],
-            ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _roleName(slot),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(_volunteerName(slot)),
+                  ],
+                ),
+              ),
+            ],
           ),
-          Text(_statusLabel(status), style: TextStyle(color: color.shade900)),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _buildSmallStatusChip(_statusLabel(status), color),
+          ),
         ],
       ),
     );
@@ -863,18 +826,84 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.red.shade200),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.block, color: Colors.red.shade700, size: 18),
-          const SizedBox(width: 10),
-          Expanded(child: Text(_availabilityVolunteerName(availability))),
-          Text('Unavailable', style: TextStyle(color: Colors.red.shade900)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(Icons.block, color: Colors.red.shade700, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(_availabilityVolunteerName(availability))),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _buildSmallStatusChip('Unavailable', Colors.red),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildHealthBadge(String label, MaterialColor color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.shade100,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.shade300),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color.shade900,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildServiceCountChip(String label, int count, MaterialColor color) {
+    return _buildSmallStatusChip('$count $label', color);
+  }
+
+  Widget _buildExpansionChip(bool isExpanded) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isExpanded ? Icons.expand_less : Icons.expand_more,
+            size: 16,
+            color: Colors.grey.shade800,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            isExpanded ? 'Hide Roles' : 'Show Roles',
+            style: TextStyle(
+              color: Colors.grey.shade900,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSmallStatusChip(String label, MaterialColor color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
