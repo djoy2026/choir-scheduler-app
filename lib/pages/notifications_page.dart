@@ -12,7 +12,9 @@ class NotificationsPage extends StatefulWidget {
 
 class _NotificationsPageState extends State<NotificationsPage> {
   bool _isLoading = true;
+  bool _isMarkingAllRead = false;
   List<Map<String, dynamic>> _notifications = [];
+  String? _pressedNotificationId;
   String? _message;
 
   @override
@@ -37,6 +39,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
       setState(() {
         _notifications = List<Map<String, dynamic>>.from(response);
+        _pressedNotificationId = null;
         _message = null;
       });
     } catch (e) {
@@ -51,7 +54,17 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _markAsRead(Map<String, dynamic> notification) async {
+    setState(() {
+      _pressedNotificationId = notification['id']?.toString();
+    });
+    await Future.delayed(const Duration(milliseconds: 120));
+
     if (notification['is_read'] == true) {
+      if (!mounted) return;
+
+      setState(() {
+        _pressedNotificationId = null;
+      });
       return;
     }
 
@@ -65,6 +78,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
     } catch (e) {
       if (!mounted) return;
 
+      setState(() {
+        _pressedNotificationId = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Unable to update notification. Please try again.'),
@@ -75,6 +91,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   Future<void> _markAllRead() async {
     try {
+      setState(() {
+        _isMarkingAllRead = true;
+      });
+      await Future.delayed(const Duration(milliseconds: 120));
+
       final user = supabase.auth.currentUser;
 
       if (user == null) {
@@ -96,6 +117,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
           content: Text('Unable to update notifications. Please try again.'),
         ),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isMarkingAllRead = false;
+        });
+      }
     }
   }
 
@@ -110,6 +137,30 @@ class _NotificationsPageState extends State<NotificationsPage> {
       return '';
     }
 
+    final now = DateTime.now();
+    final difference = now.difference(parsed);
+
+    if (difference.inSeconds < 60) {
+      return 'Just now';
+    }
+
+    if (difference.inMinutes < 60) {
+      final minutes = difference.inMinutes;
+      return '$minutes ${minutes == 1 ? 'minute' : 'minutes'} ago';
+    }
+
+    if (difference.inHours < 24) {
+      final hours = difference.inHours;
+      return '$hours ${hours == 1 ? 'hour' : 'hours'} ago';
+    }
+
+    final today = DateUtils.dateOnly(now);
+    final notificationDate = DateUtils.dateOnly(parsed);
+
+    if (notificationDate == today.subtract(const Duration(days: 1))) {
+      return 'Yesterday';
+    }
+
     final hour = parsed.hour > 12
         ? parsed.hour - 12
         : parsed.hour == 0
@@ -118,7 +169,43 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final period = parsed.hour >= 12 ? 'PM' : 'AM';
     final minute = parsed.minute.toString().padLeft(2, '0');
 
-    return '${parsed.month}/${parsed.day}/${parsed.year} • $hour:$minute $period';
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    return '${weekdays[parsed.weekday - 1]}, ${months[parsed.month]} ${parsed.day} • $hour:$minute $period';
+  }
+
+  Color _notificationColor(Map<String, dynamic> notification) {
+    final type = notification['notification_type']?.toString();
+    final title = notification['title']?.toString();
+
+    if (type == 'assignment_accepted' || title == 'Assignment Accepted') {
+      return Colors.green;
+    }
+
+    if (type == 'assignment_declined' || title == 'Assignment Declined') {
+      return Colors.red;
+    }
+
+    if (type == 'new_assignment' || title == 'New Assignment') {
+      return Colors.blue;
+    }
+
+    return Colors.grey;
   }
 
   @override
@@ -132,9 +219,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
         title: const Text('Notifications'),
         actions: [
           if (hasUnread)
-            TextButton(
-              onPressed: _markAllRead,
-              child: const Text('Mark All Read'),
+            AnimatedScale(
+              scale: _isMarkingAllRead ? .94 : 1,
+              duration: const Duration(milliseconds: 120),
+              curve: Curves.easeInOut,
+              child: TextButton(
+                onPressed: _markAllRead,
+                child: const Text('Mark All Read'),
+              ),
             ),
         ],
       ),
@@ -143,7 +235,20 @@ class _NotificationsPageState extends State<NotificationsPage> {
           : _message != null
           ? Center(child: Text(_message!))
           : _notifications.isEmpty
-          ? const Center(child: Text('No notifications'))
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.notifications_none,
+                    size: 48,
+                    color: Colors.grey.shade500,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('No notifications yet'),
+                ],
+              ),
+            )
           : RefreshIndicator(
               onRefresh: _loadNotifications,
               child: ListView.builder(
@@ -152,43 +257,59 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 itemBuilder: (context, index) {
                   final notification = _notifications[index];
                   final isRead = notification['is_read'] == true;
+                  final notificationColor = _notificationColor(notification);
+                  final isPressed =
+                      _pressedNotificationId == notification['id']?.toString();
 
-                  return Card(
-                    color: isRead ? Colors.grey.shade100 : Colors.blue.shade50,
-                    child: ListTile(
-                      leading: Icon(
-                        isRead
-                            ? Icons.notifications_none
-                            : Icons.notifications_active,
-                        color: isRead ? Colors.grey : Colors.blue,
-                      ),
-                      title: Text(
-                        notification['title']?.toString() ?? '',
-                        style: TextStyle(
-                          fontWeight: isRead
-                              ? FontWeight.w500
-                              : FontWeight.w700,
-                        ),
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(notification['message']?.toString() ?? ''),
-                            const SizedBox(height: 4),
-                            Text(
-                              _formatCreatedAt(
-                                notification['created_at']?.toString(),
-                              ),
-                              style: TextStyle(color: Colors.grey.shade700),
+                  return AnimatedScale(
+                    scale: isPressed ? .98 : 1,
+                    duration: const Duration(milliseconds: 120),
+                    curve: Curves.easeInOut,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeInOut,
+                      child: Card(
+                        color: isRead
+                            ? Colors.grey.shade100
+                            : Colors.blue.shade50,
+                        child: ListTile(
+                          leading: Icon(
+                            isRead
+                                ? Icons.notifications_none
+                                : Icons.notifications_active,
+                            color: isRead
+                                ? notificationColor.withValues(alpha: .45)
+                                : notificationColor,
+                          ),
+                          title: Text(
+                            notification['title']?.toString() ?? '',
+                            style: TextStyle(
+                              fontWeight: isRead
+                                  ? FontWeight.w500
+                                  : FontWeight.w700,
                             ),
-                          ],
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(notification['message']?.toString() ?? ''),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _formatCreatedAt(
+                                    notification['created_at']?.toString(),
+                                  ),
+                                  style: TextStyle(color: Colors.grey.shade700),
+                                ),
+                              ],
+                            ),
+                          ),
+                          onTap: () {
+                            _markAsRead(notification);
+                          },
                         ),
                       ),
-                      onTap: () {
-                        _markAsRead(notification);
-                      },
                     ),
                   );
                 },

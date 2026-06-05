@@ -215,7 +215,7 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
                       trailing: Switch(
                         value: unavailable,
 
-                        activeColor: Colors.red,
+                        activeThumbColor: Colors.red,
                         activeTrackColor: Colors.red.shade200,
 
                         inactiveThumbColor: Colors.green,

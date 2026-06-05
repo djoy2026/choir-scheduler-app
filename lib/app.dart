@@ -14,22 +14,22 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Choir Scheduler',
-      home: AuthGate(),
+      home: const AuthGate(),
     );
   }
 }
 
 class AuthGate extends StatelessWidget {
-  AuthGate({super.key});
+  const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
     final session = supabase.auth.currentSession;
 
     if (session != null) {
-      return HomePage();
+      return const HomePage();
     }
 
-    return AuthPage();
+    return const AuthPage();
   }
 }

@@ -9,6 +9,7 @@ import 'auth_page.dart';
 import 'pending_assignments_page.dart';
 import 'admin_dashboard_page.dart';
 import 'notifications_page.dart';
+import '../utils/time_format.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -19,10 +20,31 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomeAction {
+  final String label;
+  final IconData icon;
+  final MaterialColor color;
+  final Widget page;
+
+  const _HomeAction({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.page,
+  });
+}
+
+class _HomePageState extends State<HomePage>
+    with SingleTickerProviderStateMixin {
   List<dynamic> _ministries = [];
   Map<String, dynamic>? _profile;
+  Map<String, dynamic>? _nextServiceSlot;
+  Map<String, int> _ministryUpcomingCounts = {};
+  int _upcomingServicesCount = 0;
+  int _pendingAssignmentsCount = 0;
   int _unreadNotificationCount = 0;
+  late final AnimationController _bellPulseController;
+  late final Animation<double> _bellPulseAnimation;
 
   bool _isLoading = true;
 
@@ -31,7 +53,47 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    _bellPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    );
+    _bellPulseAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: ConstantTween<double>(1), weight: 30),
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 1,
+          end: 1.08,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 20,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 1.08,
+          end: 1,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 20,
+      ),
+      TweenSequenceItem(tween: ConstantTween<double>(1), weight: 30),
+    ]).animate(_bellPulseController);
     _loadHomeData();
+  }
+
+  @override
+  void dispose() {
+    _bellPulseController.dispose();
+    super.dispose();
+  }
+
+  void _syncBellPulseAnimation() {
+    if (_unreadNotificationCount > 0) {
+      if (!_bellPulseController.isAnimating) {
+        _bellPulseController.repeat();
+      }
+      return;
+    }
+
+    _bellPulseController.stop();
+    _bellPulseController.value = 0;
   }
 
   Future<void> _loadHomeData() async {
@@ -59,11 +121,71 @@ class _HomePageState extends State<HomePage> {
           .eq('user_id', user.id)
           .eq('is_read', false);
 
+      final today = _dateKey(DateTime.now());
+
+      final upcomingServicesResponse = await supabase
+          .from('service_instances')
+          .select('id, ministry_id')
+          .gte('service_date', today);
+
+      final pendingAssignmentsResponse = await supabase
+          .from('service_slots')
+          .select('id')
+          .eq('assigned_user_id', user.id)
+          .eq('slot_status', 'pending');
+
+      final nextServiceResponse = await supabase
+          .from('service_slots')
+          .select('''
+            id,
+            role_name,
+            slot_name,
+            slot_status,
+            service_instances!inner (
+              id,
+              service_name,
+              service_date,
+              start_time,
+              location,
+              teams (
+                name
+              )
+            )
+          ''')
+          .eq('assigned_user_id', user.id)
+          .inFilter('slot_status', ['pending', 'taken'])
+          .gte('service_instances.service_date', today)
+          .order('service_instances(service_date)')
+          .order('service_instances(start_time)')
+          .limit(1);
+
+      final upcomingServices = List<Map<String, dynamic>>.from(
+        upcomingServicesResponse,
+      );
+      final ministryCounts = <String, int>{};
+
+      for (final service in upcomingServices) {
+        final ministryId = service['ministry_id']?.toString();
+
+        if (ministryId == null || ministryId.isEmpty) {
+          continue;
+        }
+
+        ministryCounts[ministryId] = (ministryCounts[ministryId] ?? 0) + 1;
+      }
+
       setState(() {
         _profile = profileResponse;
         _ministries = ministriesResponse;
+        _upcomingServicesCount = upcomingServices.length;
+        _pendingAssignmentsCount = pendingAssignmentsResponse.length;
         _unreadNotificationCount = unreadNotificationsResponse.length;
+        _ministryUpcomingCounts = ministryCounts;
+        _nextServiceSlot = nextServiceResponse.isEmpty
+            ? null
+            : Map<String, dynamic>.from(nextServiceResponse.first);
       });
+      _syncBellPulseAnimation();
     } catch (e) {
       setState(() {
         _message = 'Failed to load home data: $e';
@@ -113,12 +235,14 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _unreadNotificationCount = response.length;
       });
+      _syncBellPulseAnimation();
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
         _unreadNotificationCount = 0;
       });
+      _syncBellPulseAnimation();
     }
   }
 
@@ -128,6 +252,590 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     await _refreshUnreadNotificationCount();
+  }
+
+  String _dateKey(DateTime value) {
+    return '${value.year.toString().padLeft(4, '0')}-'
+        '${value.month.toString().padLeft(2, '0')}-'
+        '${value.day.toString().padLeft(2, '0')}';
+  }
+
+  String _greeting() {
+    final hour = DateTime.now().hour;
+
+    if (hour < 12) {
+      return 'Good Morning';
+    }
+
+    if (hour < 17) {
+      return 'Good Afternoon';
+    }
+
+    return 'Good Evening';
+  }
+
+  List<Map<String, dynamic>> _sortedMinistries() {
+    final sortedMinistries = List<Map<String, dynamic>>.from(_ministries);
+
+    sortedMinistries.sort((a, b) {
+      final aName = a['name'] ?? '';
+      final bName = b['name'] ?? '';
+
+      int getPriority(String name) {
+        if (name == 'Children\'s Ministry Live Schedule') {
+          return 1;
+        }
+
+        if (name == 'Kids Choir') {
+          return 2;
+        }
+
+        if (name == 'Main Choir') {
+          return 3;
+        }
+
+        return 999;
+      }
+
+      return getPriority(aName).compareTo(getPriority(bName));
+    });
+
+    return sortedMinistries;
+  }
+
+  IconData _ministryIcon(String name) {
+    final normalizedName = name.toLowerCase();
+
+    if (normalizedName.contains('children')) {
+      return Icons.child_care;
+    }
+
+    if (normalizedName.contains('kids')) {
+      return Icons.celebration;
+    }
+
+    if (normalizedName.contains('main')) {
+      return Icons.music_note;
+    }
+
+    return Icons.groups;
+  }
+
+  String _serviceName(Map<String, dynamic> service) {
+    final rawName = service['service_name']?.toString() ?? '';
+    final trimmedName = removeServiceSuffix(rawName).trim();
+
+    if (trimmedName.isEmpty || trimmedName.startsWith('Service ')) {
+      return 'Next Service';
+    }
+
+    return trimmedName;
+  }
+
+  String _assignmentStatus(String? status) {
+    if (status == 'pending') {
+      return 'Pending confirmation';
+    }
+
+    if (status == 'taken') {
+      return 'Confirmed';
+    }
+
+    return 'Assigned';
+  }
+
+  Widget _buildHeroCard(String firstName) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.deepPurple.shade500, Colors.purple.shade300],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.deepPurple.withValues(alpha: .24),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _greeting(),
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: .82),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            firstName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 30,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _buildHeroStat('Services', _upcomingServicesCount),
+              _buildHeroStat('Pending', _pendingAssignmentsCount),
+              _buildHeroStat('Unread', _unreadNotificationCount),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroStat(String label, int value) {
+    return Container(
+      width: 92,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .16),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: .18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value.toString(),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: .82),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Text(
+        title,
+        style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+
+  Widget _buildActionGrid(bool isAdmin) {
+    final actions = [
+      _HomeAction(
+        label: 'Monthly',
+        icon: Icons.calendar_month,
+        color: Colors.indigo,
+        page: const MonthlySchedulePage(),
+      ),
+      _HomeAction(
+        label: 'My Schedule',
+        icon: Icons.schedule,
+        color: Colors.teal,
+        page: const MySchedulePage(),
+      ),
+      _HomeAction(
+        label: 'Assignments',
+        icon: Icons.assignment,
+        color: Colors.orange,
+        page: const PendingAssignmentsPage(),
+      ),
+      _HomeAction(
+        label: 'Availability',
+        icon: Icons.event_available,
+        color: Colors.green,
+        page: const MyAvailabilityPage(),
+      ),
+    ];
+
+    return Column(
+      children: [
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: actions.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.55,
+          ),
+          itemBuilder: (context, index) {
+            final action = actions[index];
+
+            return _buildActionCard(action);
+          },
+        ),
+        if (isAdmin) ...[
+          const SizedBox(height: 12),
+          _buildAdminDashboardCard(),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildActionCard(_HomeAction action) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      elevation: 1,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () {
+          _openPage(action.page);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: action.color.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(action.icon, color: action.color),
+              ),
+              Text(
+                action.label,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdminDashboardCard() {
+    return Material(
+      color: Colors.deepPurple.shade50,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () {
+          _openPage(const AdminDashboardPage());
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(Icons.admin_panel_settings, color: Colors.deepPurple),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Admin Dashboard',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+              Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNextServiceCard() {
+    final slot = _nextServiceSlot;
+
+    if (slot == null) {
+      return _buildEmptyNextServiceCard();
+    }
+
+    final service = slot['service_instances'] as Map<String, dynamic>?;
+
+    if (service == null) {
+      return _buildEmptyNextServiceCard();
+    }
+
+    final team = service['teams']?['name']?.toString() ?? 'Team not set';
+    final roleName =
+        slot['role_name']?.toString() ??
+        slot['slot_name']?.toString() ??
+        'Role not set';
+    final status = _assignmentStatus(slot['slot_status']?.toString());
+
+    return _buildDashboardCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.deepPurple.shade50,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(Icons.event, color: Colors.deepPurple.shade500),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _serviceName(service),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      formatServiceHeading(
+                        service['service_date']?.toString(),
+                        service['start_time']?.toString(),
+                      ),
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildNextServiceDetail(Icons.groups, team),
+          const SizedBox(height: 8),
+          _buildNextServiceDetail(Icons.badge, roleName),
+          const SizedBox(height: 8),
+          _buildNextServiceDetail(Icons.verified, status),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyNextServiceCard() {
+    return _buildDashboardCard(
+      child: Row(
+        children: [
+          Icon(Icons.event_busy, color: Colors.grey.shade600),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'No upcoming assigned services',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNextServiceDetail(IconData icon, String label) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: Colors.grey.shade600),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDashboardCard({required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: .05),
+            blurRadius: 14,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildMinistryCard(Map<String, dynamic> ministry) {
+    final ministryName = ministry['name']?.toString() ?? '';
+    final ministryId = ministry['id']?.toString() ?? '';
+    final upcomingCount = _ministryUpcomingCounts[ministryId] ?? 0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        elevation: 1,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () {
+            _openPage(
+              TeamsPage(
+                ministryId: ministry['id'],
+                ministryName: ministry['name'],
+              ),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurple.shade50,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Icon(
+                    _ministryIcon(ministryName),
+                    color: Colors.deepPurple,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        ministryName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if ((ministry['description'] ?? '').toString().isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            ministry['description'],
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: Colors.grey.shade700),
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '$upcomingCount upcoming ${upcomingCount == 1 ? 'service' : 'services'}',
+                        style: TextStyle(
+                          color: Colors.deepPurple.shade600,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotificationBell() {
+    final hasUnread = _unreadNotificationCount > 0;
+    final badgeText = _unreadNotificationCount > 99
+        ? '99+'
+        : _unreadNotificationCount.toString();
+
+    return ScaleTransition(
+      scale: _bellPulseAnimation,
+      child: SizedBox(
+        width: 32,
+        height: 32,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Center(
+              child: Icon(
+                Icons.notifications,
+                color: hasUnread ? Colors.amber.shade700 : Colors.grey,
+              ),
+            ),
+            if (hasUnread)
+              Positioned(
+                top: 1,
+                right: 0,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  transitionBuilder: (child, animation) {
+                    return ScaleTransition(scale: animation, child: child);
+                  },
+                  child: Container(
+                    key: ValueKey(badgeText),
+                    constraints: const BoxConstraints(
+                      minWidth: 19,
+                      minHeight: 19,
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade600,
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: .22),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      badgeText,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -141,16 +849,14 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Choir Scheduler'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         actions: [
           IconButton(
             onPressed: () {
               _openPage(const NotificationsPage());
             },
-            icon: Badge.count(
-              count: _unreadNotificationCount,
-              isLabelVisible: _unreadNotificationCount > 0,
-              child: const Icon(Icons.notifications),
-            ),
+            icon: _buildNotificationBell(),
             tooltip: 'Notifications',
           ),
           IconButton(
@@ -160,160 +866,54 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _message != null
-            ? Center(child: Text(_message!))
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-
-                children: [
-                  Text(
-                    isAdmin
-                        ? 'Welcome, $firstName (Admin)'
-                        : 'Welcome, $firstName',
-
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-
+      extendBodyBehindAppBar: true,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.deepPurple.shade50,
+              Colors.purple.shade50,
+              Colors.grey.shade50,
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _message != null
+              ? Center(child: Text(_message!))
+              : RefreshIndicator(
+                  onRefresh: _loadHomeData,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
                     children: [
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.calendar_month),
-
-                        label: const Text('Monthly'),
-
-                        onPressed: () {
-                          _openPage(const MonthlySchedulePage());
-                        },
-                      ),
-
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.schedule),
-
-                        label: const Text('My Schedule'),
-
-                        onPressed: () {
-                          _openPage(const MySchedulePage());
-                        },
-                      ),
-
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.assignment),
-
-                        label: const Text('Assignments'),
-
-                        onPressed: () {
-                          _openPage(const PendingAssignmentsPage());
-                        },
-                      ),
-
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.event_available),
-
-                        label: const Text('Availability'),
-
-                        onPressed: () {
-                          _openPage(const MyAvailabilityPage());
-                        },
-                      ),
-
-                      if (isAdmin)
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.admin_panel_settings),
-
-                          label: const Text('Admin Dashboard'),
-
-                          onPressed: () {
-                            _openPage(const AdminDashboardPage());
-                          },
-                        ),
+                      _buildHeroCard(firstName),
+                      const SizedBox(height: 24),
+                      _buildSectionHeader('Quick Actions'),
+                      _buildActionGrid(isAdmin),
+                      const SizedBox(height: 24),
+                      _buildSectionHeader('Next Service'),
+                      _buildNextServiceCard(),
+                      const SizedBox(height: 24),
+                      _buildSectionHeader('Ministries'),
+                      if (_ministries.isEmpty)
+                        _buildDashboardCard(
+                          child: const Center(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 20),
+                              child: Text('No ministries found.'),
+                            ),
+                          ),
+                        )
+                      else
+                        ..._sortedMinistries().map(_buildMinistryCard),
                     ],
                   ),
-
-                  const SizedBox(height: 24),
-
-                  const Text(
-                    'Ministries',
-
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Expanded(
-                    child: _ministries.isEmpty
-                        ? const Center(child: Text('No ministries found.'))
-                        : ListView.builder(
-                            itemCount: _ministries.length,
-
-                            itemBuilder: (context, index) {
-                              final sortedMinistries =
-                                  List<Map<String, dynamic>>.from(_ministries);
-
-                              sortedMinistries.sort((a, b) {
-                                final aName = a['name'] ?? '';
-                                final bName = b['name'] ?? '';
-
-                                int getPriority(String name) {
-                                  if (name ==
-                                      'Children\'s Ministry Live Schedule') {
-                                    return 1;
-                                  }
-
-                                  if (name == 'Kids Choir') {
-                                    return 2;
-                                  }
-
-                                  if (name == 'Main Choir') {
-                                    return 3;
-                                  }
-
-                                  return 999;
-                                }
-
-                                return getPriority(
-                                  aName,
-                                ).compareTo(getPriority(bName));
-                              });
-
-                              final ministry = sortedMinistries[index];
-
-                              return Card(
-                                child: ListTile(
-                                  title: Text(ministry['name'] ?? ''),
-
-                                  subtitle: Text(ministry['description'] ?? ''),
-
-                                  trailing: const Icon(Icons.arrow_forward_ios),
-
-                                  onTap: () {
-                                    _openPage(
-                                      TeamsPage(
-                                        ministryId: ministry['id'],
-                                        ministryName: ministry['name'],
-                                      ),
-                                    );
-                                  },
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
+                ),
+        ),
       ),
     );
   }
