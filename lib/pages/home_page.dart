@@ -428,7 +428,7 @@ class _HomePageState extends State<HomePage>
         : _titleCaseName(firstName);
     final subtitle = isAdmin
         ? 'Manage schedules, assignments and volunteers'
-        : 'Welcome back to Choir Scheduler';
+        : 'Welcome back to Kids Ministry Scheduler';
     final stats = isAdmin
         ? [
             _buildHeroStat('Open Slots', _openSlotsCount),
@@ -987,7 +987,7 @@ class _HomePageState extends State<HomePage>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Choir Scheduler'),
+        title: const Text(AppBranding.appName),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [

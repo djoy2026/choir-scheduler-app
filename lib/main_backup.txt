@@ -24,7 +24,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Choir Scheduler',
+      title: 'Kids Ministry Scheduler',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
@@ -159,7 +159,7 @@ class _LoginPageState extends State<LoginPage> {
               children: [
                 const SizedBox(height: 16),
                 const Text(
-                  'Welcome to Choir Scheduler',
+                  'Welcome to Kids Ministry Scheduler',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
@@ -512,7 +512,7 @@ class _HomePageState extends State<HomePage> {
     final isAdmin = role == 'admin';
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Choir Scheduler'),
+        title: const Text('Kids Ministry Scheduler'),
         actions: [
           IconButton(
             onPressed: _logout,

@@ -8,7 +8,7 @@
       <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#1A103F" flood-opacity="0.25"/>
     </filter>
   </defs>
-  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
   <g filter="url(#shadow)">
     <rect x="248" y="292" width="528" height="456" rx="64" stroke="white" stroke-width="54"/>
     <path d="M248 430H776" stroke="white" stroke-width="54" stroke-linecap="round"/>

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class AppBranding {
-  static const appName = 'Choir Scheduler';
+  static const appName = 'Kids Ministry Scheduler';
 
   static const primary = Color(0xFF6D3FD1);
   static const primaryDark = Color(0xFF4C1D95);

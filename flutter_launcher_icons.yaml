@@ -1,0 +1,11 @@
+flutter_launcher_icons:
+  image_path: assets/app_icon/choir_scheduler_app_icon_1.png
+  ios: true
+  remove_alpha_ios: true
+  android: false
+  web:
+    generate: false
+  macos:
+    generate: false
+  windows:
+    generate: false
