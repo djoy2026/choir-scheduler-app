@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/error_messages.dart';
 import '../utils/time_format.dart';
 
 final supabase = Supabase.instance.client;
@@ -68,9 +69,13 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       setState(() {
         _slots = response;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._loadSlots failed', e, stackTrace);
       setState(() {
-        _message = 'Failed to load slots: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load positions. Please try again.',
+        );
       });
     } finally {
       setState(() {
@@ -146,7 +151,8 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Slot claimed successfully')),
       );
-    } on PostgrestException catch (e) {
+    } on PostgrestException catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._claimSlot failed', e, stackTrace);
       if (!mounted) return;
 
       final errorText = e.message.toLowerCase();
@@ -163,12 +169,20 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._claimSlot failed', e, stackTrace);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to claim this position. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -201,7 +215,8 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Slot unclaimed')));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._unclaimSlot failed', e, stackTrace);
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -306,7 +321,12 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('User assigned pending confirmation')),
       );
-    } on PostgrestException catch (e) {
+    } on PostgrestException catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceSlotsPage._adminAssignSlot failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
       final errorText = e.message.toLowerCase();
@@ -318,7 +338,12 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceSlotsPage._adminAssignSlot failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(

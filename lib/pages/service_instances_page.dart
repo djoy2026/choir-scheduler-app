@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/time_format.dart';
 import '../utils/ui_helpers.dart';
+import '../utils/error_messages.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -67,9 +68,17 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
       setState(() {
         _instances = response;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceInstancesPage._loadInstances failed',
+        e,
+        stackTrace,
+      );
       setState(() {
-        _message = 'Failed to load service instances: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load services. Please try again.',
+        );
       });
     } finally {
       setState(() {
@@ -122,14 +131,26 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Slots regenerated')));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceInstancesPage._regenerateSlots failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to regenerate slots: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to regenerate slots. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -182,13 +203,25 @@ class _ServiceInstancesPageState extends State<ServiceInstancesPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Removed $deletedCount duplicate slots')),
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceInstancesPage._cleanDuplicateSlots failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) {
         return;
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to clean duplicate slots: $e')),
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to clean duplicate slots. Please try again.',
+            ),
+          ),
+        ),
       );
     }
   }

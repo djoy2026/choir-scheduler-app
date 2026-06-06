@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/time_format.dart';
 import '../utils/ui_helpers.dart';
+import '../utils/error_messages.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -60,9 +61,17 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
       setState(() {
         _assignments = response;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'PendingAssignmentsPage._loadAssignments failed',
+        e,
+        stackTrace,
+      );
       setState(() {
-        _message = 'Failed to load assignments: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load assignments. Please try again.',
+        );
       });
     } finally {
       setState(() {
@@ -208,7 +217,12 @@ class _PendingAssignmentsPageState extends State<PendingAssignmentsPage> {
           content: Text(accept ? 'Assignment accepted' : 'Assignment declined'),
         ),
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'PendingAssignmentsPage._respond failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(

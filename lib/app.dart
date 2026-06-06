@@ -40,12 +40,22 @@ class AuthGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final session = supabase.auth.currentSession;
+    try {
+      debugPrint('SESSION_CHECK_START');
+      final session = supabase.auth.currentSession;
+      debugPrint('SESSION_CHECK_COMPLETE');
 
-    if (session != null) {
-      return const HomePage();
+      if (session != null) {
+        debugPrint('ROUTE_HOME');
+        return const HomePage();
+      }
+
+      debugPrint('ROUTE_LOGIN');
+      return const AuthPage();
+    } catch (error, stackTrace) {
+      debugPrint('AUTH_GATE_EXCEPTION: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      rethrow;
     }
-
-    return const AuthPage();
   }
 }

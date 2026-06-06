@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/error_messages.dart';
+
 final supabase = Supabase.instance.client;
 
 class NotificationsPage extends StatefulWidget {
@@ -42,7 +44,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
         _pressedNotificationId = null;
         _message = null;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'NotificationsPage._loadNotifications failed',
+        e,
+        stackTrace,
+      );
       setState(() {
         _message = 'Unable to load notifications. Please try again.';
       });
@@ -75,7 +82,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
           .eq('id', notification['id']);
 
       await _loadNotifications();
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('NotificationsPage._markAsRead failed', e, stackTrace);
       if (!mounted) return;
 
       setState(() {
@@ -109,7 +117,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
           .eq('is_read', false);
 
       await _loadNotifications();
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('NotificationsPage._markAllRead failed', e, stackTrace);
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(

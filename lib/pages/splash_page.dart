@@ -22,6 +22,7 @@ class _SplashPageState extends State<SplashPage>
   @override
   void initState() {
     super.initState();
+    debugPrint('SPLASH_START');
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -34,25 +35,34 @@ class _SplashPageState extends State<SplashPage>
   }
 
   Future<void> _showSplash() async {
-    await _controller.forward();
-    await Future.delayed(const Duration(milliseconds: 550));
-    await _controller.reverse();
+    try {
+      await _controller.forward();
+      await Future.delayed(const Duration(milliseconds: 550));
+      await _controller.reverse();
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) {
-          final session = supabase.auth.currentSession;
+      debugPrint('SESSION_CHECK_START');
+      final session = supabase.auth.currentSession;
+      debugPrint('SESSION_CHECK_COMPLETE');
+      debugPrint(session == null ? 'ROUTE_LOGIN' : 'ROUTE_HOME');
 
-          return FadeTransition(
-            opacity: animation,
-            child: session == null ? const AuthPage() : const HomePage(),
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 350),
-      ),
-    );
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) {
+            return FadeTransition(
+              opacity: animation,
+              child: session == null ? const AuthPage() : const HomePage(),
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 350),
+        ),
+      );
+    } catch (error, stackTrace) {
+      debugPrint('SPLASH_ROUTING_EXCEPTION: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      rethrow;
+    }
   }
 
   @override

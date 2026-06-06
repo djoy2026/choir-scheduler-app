@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/time_format.dart';
 import '../utils/ui_helpers.dart';
+import '../utils/error_messages.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -53,7 +54,12 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
       setState(() {
         _services = List<Map<String, dynamic>>.from(response);
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'MyAvailabilityPage._loadServices failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -112,7 +118,12 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Availability updated')));
-    } on PostgrestException {
+    } on PostgrestException catch (e, stackTrace) {
+      logTechnicalError(
+        'MyAvailabilityPage._toggleAvailability failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -120,7 +131,12 @@ class _MyAvailabilityPageState extends State<MyAvailabilityPage> {
           content: Text('Unable to update availability. Please try again.'),
         ),
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'MyAvailabilityPage._toggleAvailability failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(

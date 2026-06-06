@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/error_messages.dart';
+
 final supabase = Supabase.instance.client;
 
 class TeamRolesPage extends StatefulWidget {
@@ -81,11 +83,15 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
         _isAdmin = isAdmin;
         _roles = roles;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('TeamRolesPage._loadData failed', e, stackTrace);
       if (!mounted) return;
 
       setState(() {
-        _message = 'Failed to load team roles: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load team roles. Please try again.',
+        );
       });
     } finally {
       if (mounted) {
@@ -232,7 +238,12 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext, true);
                 }
-              } catch (e) {
+              } catch (e, stackTrace) {
+                logTechnicalError(
+                  'TeamRolesPage._showAddRoleDialog save failed',
+                  e,
+                  stackTrace,
+                );
                 if (!dialogContext.mounted) {
                   return;
                 }
@@ -242,7 +253,14 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
                 });
 
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  SnackBar(content: Text('Failed to save role: $e')),
+                  SnackBar(
+                    content: Text(
+                      friendlyErrorMessage(
+                        e,
+                        fallback: 'Unable to save role. Please try again.',
+                      ),
+                    ),
+                  ),
                 );
               }
             }
@@ -440,7 +458,12 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext, true);
                 }
-              } catch (e) {
+              } catch (e, stackTrace) {
+                logTechnicalError(
+                  'TeamRolesPage._showEditRoleDialog save failed',
+                  e,
+                  stackTrace,
+                );
                 if (!dialogContext.mounted) {
                   return;
                 }
@@ -450,7 +473,14 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
                 });
 
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  SnackBar(content: Text('Failed to update role: $e')),
+                  SnackBar(
+                    content: Text(
+                      friendlyErrorMessage(
+                        e,
+                        fallback: 'Unable to update role. Please try again.',
+                      ),
+                    ),
+                  ),
                 );
               }
             }
@@ -599,6 +629,23 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
     required bool isActive,
   }) async {
     try {
+      if (isActive && _hasActiveRoleWithSameName(role)) {
+        final roleName = role['role_name']?.toString().trim();
+
+        if (!mounted) {
+          return;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'An active ${roleName?.isEmpty ?? true ? 'role' : roleName} role already exists for this team.',
+            ),
+          ),
+        );
+        return;
+      }
+
       final targetSectionRoles = _sortedRoles(
         isActive: isActive,
       ).where((item) => item['id'] != role['id']);
@@ -631,15 +678,46 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
           content: Text(isActive ? 'Role reactivated' : 'Role deactivated'),
         ),
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('TeamRolesPage._setRoleActive failed', e, stackTrace);
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to update role: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to update role. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
+  }
+
+  bool _hasActiveRoleWithSameName(Map<String, dynamic> role) {
+    final roleName = role['role_name']?.toString().trim().toLowerCase() ?? '';
+
+    if (roleName.isEmpty) {
+      return false;
+    }
+
+    return _roles.any((item) {
+      if (item['id'] == role['id']) {
+        return false;
+      }
+
+      if (!_isActiveRole(item)) {
+        return false;
+      }
+
+      final itemRoleName =
+          item['role_name']?.toString().trim().toLowerCase() ?? '';
+
+      return itemRoleName == roleName && item['team_id'] == role['team_id'];
+    });
   }
 
   Future<void> _moveRole(
@@ -677,14 +755,22 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
       }
 
       await _loadData();
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('TeamRolesPage._moveRole failed', e, stackTrace);
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to reorder role: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to reorder role. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -730,14 +816,26 @@ class _TeamRolesPageState extends State<TeamRolesPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Role deleted')));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'TeamRolesPage._confirmDeleteRole failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to delete role: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to delete role. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 

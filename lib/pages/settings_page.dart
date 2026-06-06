@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../theme/app_branding.dart';
+import '../utils/error_messages.dart';
 import 'auth_page.dart';
 
 final supabase = Supabase.instance.client;
@@ -42,7 +43,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _profile = response;
         _message = null;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('SettingsPage._loadProfile failed', e, stackTrace);
       setState(() {
         _message = 'Unable to load settings. Please try again.';
       });
@@ -65,7 +67,8 @@ class _SettingsPageState extends State<SettingsPage> {
         MaterialPageRoute(builder: (_) => const AuthPage()),
         (route) => false,
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('SettingsPage._logout failed', e, stackTrace);
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(

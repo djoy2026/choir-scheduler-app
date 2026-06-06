@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'home_page.dart';
 import '../theme/app_branding.dart';
+import '../utils/error_messages.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -77,13 +78,18 @@ class _LoginPageState extends State<LoginPage>
       Navigator.of(
         context,
       ).pushReplacement(MaterialPageRoute(builder: (_) => const HomePage()));
-    } on AuthException catch (e) {
+    } on AuthException catch (e, stackTrace) {
+      logTechnicalError('LoginPage._login auth failed', e, stackTrace);
       setState(() {
-        _message = e.message;
+        _message = friendlyErrorMessage(e);
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('LoginPage._login failed', e, stackTrace);
       setState(() {
-        _message = 'Error: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to log in. Please try again.',
+        );
       });
     } finally {
       if (mounted) {

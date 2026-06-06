@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'service_slots_page.dart';
 import 'teams_page.dart';
+import '../utils/error_messages.dart';
 import '../utils/time_format.dart';
 import '../utils/ui_helpers.dart';
 
@@ -178,9 +179,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _fullyStaffedServiceCount = fullyStaffedServiceCount;
         _servicesNeedingAttentionCount = servicesNeedingAttentionCount;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'AdminDashboardPage._loadDashboard failed',
+        e,
+        stackTrace,
+      );
       setState(() {
-        _message = 'Failed to load admin dashboard: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load admin dashboard. Please try again.',
+        );
       });
     } finally {
       if (mounted) {

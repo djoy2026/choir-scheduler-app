@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/time_format.dart';
 import '../utils/ui_helpers.dart';
+import '../utils/error_messages.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -58,9 +59,13 @@ class _MySchedulePageState extends State<MySchedulePage> {
       setState(() {
         _schedule = List<Map<String, dynamic>>.from(response);
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('MySchedulePage._loadMySchedule failed', e, stackTrace);
       setState(() {
-        _message = 'Failed to load schedule: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load your schedule. Please try again.',
+        );
       });
     } finally {
       setState(() {
@@ -133,12 +138,20 @@ class _MySchedulePageState extends State<MySchedulePage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Removed from schedule')));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('MySchedulePage._unclaimSlot failed', e, stackTrace);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to remove this assignment. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 

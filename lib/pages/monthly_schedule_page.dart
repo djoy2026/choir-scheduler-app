@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'service_slots_page.dart';
+import '../utils/error_messages.dart';
 import '../utils/time_format.dart';
 import '../utils/ui_helpers.dart';
 
@@ -98,9 +99,17 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
       setState(() {
         _services = List<Map<String, dynamic>>.from(response);
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'MonthlySchedulePage._loadServices failed',
+        e,
+        stackTrace,
+      );
       setState(() {
-        _message = 'Failed to load monthly schedule: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load monthly schedule. Please try again.',
+        );
       });
     } finally {
       if (mounted) {
@@ -322,12 +331,24 @@ class _MonthlySchedulePageState extends State<MonthlySchedulePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Service created successfully')),
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'MonthlySchedulePage._createService failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to create service. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 

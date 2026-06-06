@@ -11,9 +11,23 @@ import 'admin_dashboard_page.dart';
 import 'notifications_page.dart';
 import 'settings_page.dart';
 import '../theme/app_branding.dart';
+import '../utils/error_messages.dart';
 import '../utils/time_format.dart';
 
 final supabase = Supabase.instance.client;
+
+const _kidsClassTeamNames = {
+  'Nursery',
+  'Kindies',
+  '2 Year Olds',
+  '3 Year Olds',
+  '4 Year Olds',
+  '1st Grade',
+  '2nd Grade',
+  '3rd Grade',
+  '4th Grade',
+  '5th Grade',
+};
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -114,6 +128,7 @@ class _HomePageState extends State<HomePage>
           .single();
       final isAdmin =
           profileResponse['role']?.toString().trim().toLowerCase() == 'admin';
+      debugPrint(isAdmin ? 'ROUTE_ADMIN' : 'ROUTE_HOME');
 
       final ministriesResponse = await supabase
           .from('ministries')
@@ -133,6 +148,7 @@ class _HomePageState extends State<HomePage>
           .select('''
             id,
             ministry_id,
+            team_id,
             service_slots (
               id,
               slot_status
@@ -186,12 +202,21 @@ class _HomePageState extends State<HomePage>
       final upcomingServices = List<Map<String, dynamic>>.from(
         upcomingServicesResponse,
       );
+      final activeTeamIds = await _activeTeamIds();
+      final kidsClassTeamIds = await _kidsClassTeamIds();
+      final kidsClassMinistryId = _kidsClassMinistryId(ministriesResponse);
       final ministryCounts = <String, int>{};
       var openSlotsCount = 0;
       var pendingSlotsCount = 0;
 
       for (final service in upcomingServices) {
         final ministryId = service['ministry_id']?.toString();
+        final teamId = service['team_id']?.toString();
+
+        if (teamId == null || !activeTeamIds.contains(teamId)) {
+          continue;
+        }
+
         final slots = List<Map<String, dynamic>>.from(
           service['service_slots'] ?? const [],
         );
@@ -210,6 +235,21 @@ class _HomePageState extends State<HomePage>
         }
 
         ministryCounts[ministryId] = (ministryCounts[ministryId] ?? 0) + 1;
+
+        if (!kidsClassTeamIds.contains(teamId)) {
+          continue;
+        }
+
+        if (kidsClassMinistryId == null || kidsClassMinistryId.isEmpty) {
+          continue;
+        }
+
+        if (ministryId == kidsClassMinistryId) {
+          continue;
+        }
+
+        ministryCounts[kidsClassMinistryId] =
+            (ministryCounts[kidsClassMinistryId] ?? 0) + 1;
       }
 
       setState(() {
@@ -227,15 +267,66 @@ class _HomePageState extends State<HomePage>
             : Map<String, dynamic>.from(nextServiceResponse.first);
       });
       _syncBellPulseAnimation();
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('HomePage._loadHomeData failed', e, stackTrace);
       setState(() {
-        _message = 'Failed to load home data: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load home. Please try again.',
+        );
       });
     } finally {
       setState(() {
         _isLoading = false;
       });
     }
+  }
+
+  Future<Set<String>> _kidsClassTeamIds() async {
+    final response = await supabase
+        .from('teams')
+        .select('id')
+        .eq('is_active', true)
+        .inFilter('name', _kidsClassTeamNames.toList())
+        .order('display_order')
+        .order('name');
+
+    return List<Map<String, dynamic>>.from(response)
+        .map((team) => team['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  Future<Set<String>> _activeTeamIds() async {
+    final response = await supabase
+        .from('teams')
+        .select('id')
+        .eq('is_active', true)
+        .order('display_order')
+        .order('name');
+
+    return List<Map<String, dynamic>>.from(response)
+        .map((team) => team['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  String? _kidsClassMinistryId(List<dynamic> ministries) {
+    for (final ministry in ministries) {
+      if (ministry is! Map<String, dynamic>) {
+        continue;
+      }
+
+      final name = ministry['name']?.toString() ?? '';
+
+      if (_ministryHomePriority(name) != 1) {
+        continue;
+      }
+
+      return ministry['id']?.toString();
+    }
+
+    return null;
   }
 
   Future<void> _logout() async {
@@ -248,12 +339,20 @@ class _HomePageState extends State<HomePage>
         MaterialPageRoute(builder: (_) => const AuthPage()),
         (route) => false,
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('HomePage._logout failed', e, stackTrace);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Logout failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to log out. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -277,7 +376,12 @@ class _HomePageState extends State<HomePage>
         _unreadNotificationCount = response.length;
       });
       _syncBellPulseAnimation();
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'HomePage._refreshUnreadNotificationCount failed',
+        e,
+        stackTrace,
+      );
       if (!mounted) return;
 
       setState(() {
@@ -335,32 +439,43 @@ class _HomePageState extends State<HomePage>
   }
 
   List<Map<String, dynamic>> _sortedMinistries() {
-    final sortedMinistries = List<Map<String, dynamic>>.from(_ministries);
+    final sortedMinistries = List<Map<String, dynamic>>.from(
+      _ministries.where((ministry) {
+        final name = ministry['name']?.toString() ?? '';
+
+        return _ministryHomePriority(name) < 999;
+      }),
+    );
 
     sortedMinistries.sort((a, b) {
-      final aName = a['name'] ?? '';
-      final bName = b['name'] ?? '';
+      final aName = a['name']?.toString() ?? '';
+      final bName = b['name']?.toString() ?? '';
 
-      int getPriority(String name) {
-        if (name == 'Children\'s Ministry Live Schedule') {
-          return 1;
-        }
-
-        if (name == 'Kids Choir') {
-          return 2;
-        }
-
-        if (name == 'Main Choir') {
-          return 3;
-        }
-
-        return 999;
-      }
-
-      return getPriority(aName).compareTo(getPriority(bName));
+      return _ministryHomePriority(
+        aName,
+      ).compareTo(_ministryHomePriority(bName));
     });
 
     return sortedMinistries;
+  }
+
+  int _ministryHomePriority(String name) {
+    final normalizedName = name.trim().toLowerCase();
+
+    if (normalizedName == 'children\'s ministry' ||
+        normalizedName == 'children\'s ministry live schedule') {
+      return 1;
+    }
+
+    if (normalizedName == 'kids choir') {
+      return 2;
+    }
+
+    if (normalizedName == 'main choir') {
+      return 3;
+    }
+
+    return 999;
   }
 
   IconData _ministryIcon(String name) {
@@ -383,7 +498,7 @@ class _HomePageState extends State<HomePage>
 
   String _ministryDisplayName(String name) {
     if (name.contains('Children\'s Ministry Live Schedule')) {
-      return 'Children\'s Ministry';
+      return 'Kids Class Schedule';
     }
 
     return name;
@@ -840,10 +955,7 @@ class _HomePageState extends State<HomePage>
           borderRadius: BorderRadius.circular(18),
           onTap: () {
             _openPage(
-              TeamsPage(
-                ministryId: ministry['id'],
-                ministryName: ministry['name'],
-              ),
+              TeamsPage(ministryId: ministry['id'], ministryName: displayName),
             );
           },
           child: Padding(
@@ -979,11 +1091,13 @@ class _HomePageState extends State<HomePage>
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('HOME_PAGE_BUILD');
     final firstName = _profile?['first_name'] ?? 'User';
 
     final role = _profile?['role'] ?? 'volunteer';
 
     final isAdmin = role == 'admin';
+    final visibleMinistries = _sortedMinistries();
 
     return Scaffold(
       appBar: AppBar(
@@ -1045,7 +1159,7 @@ class _HomePageState extends State<HomePage>
                       _buildNextServiceCard(),
                       const SizedBox(height: 24),
                       _buildSectionHeader('Ministries'),
-                      if (_ministries.isEmpty)
+                      if (visibleMinistries.isEmpty)
                         _buildDashboardCard(
                           child: const Center(
                             child: Padding(
@@ -1055,7 +1169,7 @@ class _HomePageState extends State<HomePage>
                           ),
                         )
                       else
-                        ..._sortedMinistries().map(_buildMinistryCard),
+                        ...visibleMinistries.map(_buildMinistryCard),
                     ],
                   ),
                 ),

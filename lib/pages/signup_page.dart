@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../utils/error_messages.dart';
+
 final supabase = Supabase.instance.client;
 
 class SignUpPage extends StatefulWidget {
@@ -36,13 +38,18 @@ class _SignUpPageState extends State<SignUpPage> {
       setState(() {
         _message = 'Signup successful';
       });
-    } on AuthException catch (e) {
+    } on AuthException catch (e, stackTrace) {
+      logTechnicalError('SignUpPage._signUp auth failed', e, stackTrace);
       setState(() {
-        _message = e.message;
+        _message = friendlyErrorMessage(e);
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('SignUpPage._signUp failed', e, stackTrace);
       setState(() {
-        _message = 'Error: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to create account. Please try again.',
+        );
       });
     } finally {
       setState(() {
