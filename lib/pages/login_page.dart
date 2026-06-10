@@ -68,10 +68,24 @@ class _LoginPageState extends State<LoginPage>
     });
 
     try {
-      await supabase.auth.signInWithPassword(
+      final authResponse = await supabase.auth.signInWithPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
+      final user = authResponse.user;
+
+      if (user == null) {
+        throw const AuthException('Unable to sign in. Please try again.');
+      }
+
+      if (user.emailConfirmedAt == null) {
+        await supabase.auth.signOut();
+
+        setState(() {
+          _message = 'Please verify your email before signing in.';
+        });
+        return;
+      }
 
       if (!mounted) return;
 
@@ -81,7 +95,7 @@ class _LoginPageState extends State<LoginPage>
     } on AuthException catch (e, stackTrace) {
       logTechnicalError('LoginPage._login auth failed', e, stackTrace);
       setState(() {
-        _message = friendlyErrorMessage(e);
+        _message = _friendlyAuthMessage(e);
       });
     } catch (e, stackTrace) {
       logTechnicalError('LoginPage._login failed', e, stackTrace);
@@ -100,9 +114,55 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  Future<void> _forgotPassword() async {
+    final email = _emailController.text.trim();
+
+    if (_emailValidator(email) != null) {
+      setState(() {
+        _message = 'Enter your email address first.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _message = null;
+    });
+
+    try {
+      await supabase.auth.resetPasswordForEmail(email);
+
+      setState(() {
+        _message = 'Password reset instructions have been sent to your email.';
+      });
+    } on AuthException catch (e, stackTrace) {
+      logTechnicalError('LoginPage._forgotPassword auth failed', e, stackTrace);
+      setState(() {
+        _message = _friendlyAuthMessage(e);
+      });
+    } catch (e, stackTrace) {
+      logTechnicalError('LoginPage._forgotPassword failed', e, stackTrace);
+      setState(() {
+        _message = 'Unable to send reset instructions. Please try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   String? _emailValidator(String? value) {
     if (value == null || value.trim().isEmpty) {
       return 'Email required';
+    }
+
+    final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+    if (!emailPattern.hasMatch(value.trim())) {
+      return 'Enter a valid email address';
     }
 
     return null;
@@ -114,6 +174,27 @@ class _LoginPageState extends State<LoginPage>
     }
 
     return null;
+  }
+
+  String _friendlyAuthMessage(AuthException error) {
+    final message = error.message.toLowerCase();
+
+    if (message.contains('email not confirmed') ||
+        message.contains('not confirmed') ||
+        message.contains('confirm')) {
+      return 'Please verify your email before signing in.';
+    }
+
+    if (message.contains('invalid login') ||
+        message.contains('invalid credentials')) {
+      return 'Invalid email or password.';
+    }
+
+    if (message.contains('rate limit')) {
+      return 'Too many attempts. Please wait a moment and try again.';
+    }
+
+    return 'Unable to log in. Please try again.';
   }
 
   @override
@@ -245,6 +326,19 @@ class _LoginPageState extends State<LoginPage>
                                     });
                                   },
                                 ),
+                              ),
+                            ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: _isLoading ? null : _forgotPassword,
+                                style: TextButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  padding: const EdgeInsets.only(top: 8),
+                                ),
+                                child: const Text('Forgot Password?'),
                               ),
                             ),
                             const SizedBox(height: 18),

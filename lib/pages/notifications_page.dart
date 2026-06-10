@@ -15,6 +15,7 @@ class NotificationsPage extends StatefulWidget {
 class _NotificationsPageState extends State<NotificationsPage> {
   bool _isLoading = true;
   bool _isMarkingAllRead = false;
+  bool _isDeletingRead = false;
   List<Map<String, dynamic>> _notifications = [];
   String? _pressedNotificationId;
   String? _message;
@@ -38,9 +39,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
           .select()
           .eq('user_id', user.id)
           .order('created_at', ascending: false);
-
+      final notifications = List<Map<String, dynamic>>.from(response);
       setState(() {
-        _notifications = List<Map<String, dynamic>>.from(response);
+        _notifications = notifications;
         _pressedNotificationId = null;
         _message = null;
       });
@@ -81,7 +82,18 @@ class _NotificationsPageState extends State<NotificationsPage> {
           .update({'is_read': true})
           .eq('id', notification['id']);
 
-      await _loadNotifications();
+      if (!mounted) return;
+
+      setState(() {
+        _notifications = _notifications.map((existingNotification) {
+          if (existingNotification['id'] == notification['id']) {
+            return {...existingNotification, 'is_read': true};
+          }
+
+          return existingNotification;
+        }).toList();
+        _pressedNotificationId = null;
+      });
     } catch (e, stackTrace) {
       logTechnicalError('NotificationsPage._markAsRead failed', e, stackTrace);
       if (!mounted) return;
@@ -116,7 +128,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
           .eq('user_id', user.id)
           .eq('is_read', false);
 
-      await _loadNotifications();
+      if (!mounted) return;
+
+      setState(() {
+        _notifications = _notifications
+            .map((notification) => {...notification, 'is_read': true})
+            .toList();
+      });
     } catch (e, stackTrace) {
       logTechnicalError('NotificationsPage._markAllRead failed', e, stackTrace);
       if (!mounted) return;
@@ -130,6 +148,172 @@ class _NotificationsPageState extends State<NotificationsPage> {
       if (mounted) {
         setState(() {
           _isMarkingAllRead = false;
+        });
+      }
+    }
+  }
+
+  Future<bool> _confirmDelete({
+    required String title,
+    required String message,
+    required String actionLabel,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: Text(actionLabel),
+            ),
+          ],
+        );
+      },
+    );
+
+    return confirmed == true;
+  }
+
+  Future<void> _deleteNotification(Map<String, dynamic> notification) async {
+    final notificationId = notification['id']?.toString();
+
+    if (notificationId == null || notificationId.isEmpty) {
+      return;
+    }
+
+    final confirmed = await _confirmDelete(
+      title: 'Delete Notification?',
+      message: 'This notification will be permanently deleted.',
+      actionLabel: 'Delete',
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('User not logged in');
+      }
+
+      await supabase
+          .from('notifications')
+          .delete()
+          .eq('id', notificationId)
+          .eq('user_id', user.id);
+
+      if (!mounted) return;
+
+      setState(() {
+        _notifications = _notifications.where((existingNotification) {
+          return existingNotification['id']?.toString() != notificationId;
+        }).toList();
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Notification deleted')));
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'NotificationsPage._deleteNotification failed',
+        e,
+        stackTrace,
+      );
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to delete notification. Please try again.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteAllRead() async {
+    final readCount = _notifications
+        .where((notification) => notification['is_read'] == true)
+        .length;
+
+    if (readCount == 0) {
+      return;
+    }
+
+    final confirmed = await _confirmDelete(
+      title: 'Delete All Read?',
+      message:
+          'Delete $readCount read ${readCount == 1 ? 'notification' : 'notifications'}?',
+      actionLabel: 'Delete Read',
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setState(() {
+        _isDeletingRead = true;
+      });
+
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('User not logged in');
+      }
+
+      await supabase
+          .from('notifications')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('is_read', true);
+
+      if (!mounted) return;
+
+      setState(() {
+        _notifications = _notifications
+            .where((notification) => notification['is_read'] != true)
+            .toList();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Deleted $readCount read ${readCount == 1 ? 'notification' : 'notifications'}',
+          ),
+        ),
+      );
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'NotificationsPage._deleteAllRead failed',
+        e,
+        stackTrace,
+      );
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to delete read notifications. Please try again.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeletingRead = false;
         });
       }
     }
@@ -214,13 +398,41 @@ class _NotificationsPageState extends State<NotificationsPage> {
       return Colors.blue;
     }
 
+    if (type == 'coverage_needed' || title == 'Coverage Needed') {
+      return Colors.orange;
+    }
+
+    if (type == 'coverage_claimed' || title == 'Coverage Claimed') {
+      return Colors.green;
+    }
+
     return Colors.grey;
+  }
+
+  IconData _notificationIcon(Map<String, dynamic> notification) {
+    final type = notification['notification_type']?.toString();
+    final title = notification['title']?.toString();
+
+    if (type == 'coverage_needed' || title == 'Coverage Needed') {
+      return Icons.volunteer_activism;
+    }
+
+    if (type == 'coverage_claimed' || title == 'Coverage Claimed') {
+      return Icons.check_circle_outline;
+    }
+
+    return notification['is_read'] == true
+        ? Icons.notifications_none
+        : Icons.notifications_active;
   }
 
   @override
   Widget build(BuildContext context) {
     final hasUnread = _notifications.any(
       (notification) => notification['is_read'] != true,
+    );
+    final hasRead = _notifications.any(
+      (notification) => notification['is_read'] == true,
     );
 
     return Scaffold(
@@ -236,6 +448,18 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 onPressed: _markAllRead,
                 child: const Text('Mark All Read'),
               ),
+            ),
+          if (hasRead)
+            IconButton(
+              tooltip: 'Delete all read',
+              onPressed: _isDeletingRead ? null : _deleteAllRead,
+              icon: _isDeletingRead
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_sweep_outlined),
             ),
         ],
       ),
@@ -292,12 +516,32 @@ class _NotificationsPageState extends State<NotificationsPage> {
                             : Colors.blue.shade50,
                         child: ListTile(
                           leading: Icon(
-                            isRead
-                                ? Icons.notifications_none
-                                : Icons.notifications_active,
+                            _notificationIcon(notification),
                             color: isRead
                                 ? notificationColor.withValues(alpha: .45)
                                 : notificationColor,
+                          ),
+                          trailing: PopupMenuButton<String>(
+                            tooltip: 'Notification actions',
+                            onSelected: (value) {
+                              if (value == 'delete') {
+                                _deleteNotification(notification);
+                              }
+                            },
+                            itemBuilder: (context) {
+                              return const [
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.delete_outline),
+                                      SizedBox(width: 10),
+                                      Text('Delete'),
+                                    ],
+                                  ),
+                                ),
+                              ];
+                            },
                           ),
                           title: Text(
                             notification['title']?.toString() ?? '',

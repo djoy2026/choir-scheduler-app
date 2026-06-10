@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_branding.dart';
 import '../utils/error_messages.dart';
 import 'auth_page.dart';
+import 'broadcast_message_page.dart';
+import 'user_management_page.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -35,12 +37,20 @@ class _SettingsPageState extends State<SettingsPage> {
 
       final response = await supabase
           .from('profiles')
-          .select('first_name, last_name, email, role')
+          .select('first_name, last_name, email, role, status')
           .eq('id', user.id)
-          .single();
+          .maybeSingle();
 
       setState(() {
-        _profile = response;
+        _profile = response == null
+            ? {
+                'first_name': '',
+                'last_name': '',
+                'email': user.email,
+                'role': 'volunteer',
+                'status': 'active',
+              }
+            : Map<String, dynamic>.from(response);
         _message = null;
       });
     } catch (e, stackTrace) {
@@ -97,6 +107,10 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     return '${role[0].toUpperCase()}${role.substring(1)}';
+  }
+
+  bool get _isAdmin {
+    return _profile?['role']?.toString().trim().toLowerCase() == 'admin';
   }
 
   Widget _buildSection({
@@ -182,6 +196,34 @@ class _SettingsPageState extends State<SettingsPage> {
                       title: 'Role',
                       subtitle: _profileRole(),
                     ),
+                    if (_isAdmin)
+                      _buildSettingTile(
+                        icon: Icons.manage_accounts_outlined,
+                        title: 'User Management',
+                        subtitle: 'Manage user roles and account status',
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const UserManagementPage(),
+                            ),
+                          );
+                        },
+                      ),
+                    if (_isAdmin)
+                      _buildSettingTile(
+                        icon: Icons.campaign_outlined,
+                        title: 'Broadcast Message',
+                        subtitle: 'Send notifications to selected groups',
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const BroadcastMessagePage(),
+                            ),
+                          );
+                        },
+                      ),
                   ],
                 ),
                 const SizedBox(height: 22),

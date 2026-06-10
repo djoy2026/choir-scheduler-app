@@ -10,6 +10,7 @@ import 'pending_assignments_page.dart';
 import 'admin_dashboard_page.dart';
 import 'notifications_page.dart';
 import 'settings_page.dart';
+import 'coverage_requests_page.dart';
 import '../theme/app_branding.dart';
 import '../utils/error_messages.dart';
 import '../utils/time_format.dart';
@@ -56,8 +57,8 @@ class _HomePageState extends State<HomePage>
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _nextServiceSlot;
   Map<String, int> _ministryUpcomingCounts = {};
+  List<Map<String, dynamic>> _openSlotsByTeam = [];
   int _upcomingServicesCount = 0;
-  int _openSlotsCount = 0;
   int _pendingAssignmentsCount = 0;
   int _unreadNotificationCount = 0;
   late final AnimationController _bellPulseController;
@@ -121,11 +122,7 @@ class _HomePageState extends State<HomePage>
         throw Exception('No authenticated user found.');
       }
 
-      final profileResponse = await supabase
-          .from('profiles')
-          .select()
-          .eq('id', user.id)
-          .single();
+      final profileResponse = await _loadOrCreateProfile(user);
       final isAdmin =
           profileResponse['role']?.toString().trim().toLowerCase() == 'admin';
       debugPrint(isAdmin ? 'ROUTE_ADMIN' : 'ROUTE_HOME');
@@ -141,7 +138,10 @@ class _HomePageState extends State<HomePage>
           .eq('user_id', user.id)
           .eq('is_read', false);
 
-      final today = _dateKey(DateTime.now());
+      final now = DateTime.now();
+      final today = _dateKey(now);
+      final currentMonthStart = _dateKey(DateTime(now.year, now.month, 1));
+      final currentMonthEnd = _dateKey(DateTime(now.year, now.month + 1, 0));
 
       final upcomingServicesResponse = await supabase
           .from('service_instances')
@@ -155,6 +155,22 @@ class _HomePageState extends State<HomePage>
             )
           ''')
           .gte('service_date', today);
+      final currentMonthServicesResponse = await supabase
+          .from('service_instances')
+          .select('''
+            id,
+            team_id,
+            teams (
+              id,
+              name
+            ),
+            service_slots (
+              id,
+              slot_status
+            )
+          ''')
+          .gte('service_date', currentMonthStart)
+          .lte('service_date', currentMonthEnd);
 
       final pendingAssignmentsResponse = await supabase
           .from('service_slots')
@@ -202,11 +218,13 @@ class _HomePageState extends State<HomePage>
       final upcomingServices = List<Map<String, dynamic>>.from(
         upcomingServicesResponse,
       );
+      final currentMonthServices = List<Map<String, dynamic>>.from(
+        currentMonthServicesResponse,
+      );
       final activeTeamIds = await _activeTeamIds();
       final kidsClassTeamIds = await _kidsClassTeamIds();
       final kidsClassMinistryId = _kidsClassMinistryId(ministriesResponse);
       final ministryCounts = <String, int>{};
-      var openSlotsCount = 0;
       var pendingSlotsCount = 0;
 
       for (final service in upcomingServices) {
@@ -221,10 +239,6 @@ class _HomePageState extends State<HomePage>
           service['service_slots'] ?? const [],
         );
 
-        openSlotsCount += slots.where((slot) {
-          final status = slot['slot_status']?.toString().trim().toLowerCase();
-          return status == 'open';
-        }).length;
         pendingSlotsCount += slots.where((slot) {
           final status = slot['slot_status']?.toString().trim().toLowerCase();
           return status == 'pending';
@@ -252,11 +266,16 @@ class _HomePageState extends State<HomePage>
             (ministryCounts[kidsClassMinistryId] ?? 0) + 1;
       }
 
+      final openSlotsByTeam = _buildOpenSlotsByTeam(
+        currentMonthServices,
+        activeTeamIds,
+      );
+
       setState(() {
         _profile = profileResponse;
         _ministries = ministriesResponse;
         _upcomingServicesCount = volunteerUpcomingResponse.length;
-        _openSlotsCount = openSlotsCount;
+        _openSlotsByTeam = openSlotsByTeam;
         _pendingAssignmentsCount = isAdmin
             ? pendingSlotsCount
             : pendingAssignmentsResponse.length;
@@ -279,6 +298,49 @@ class _HomePageState extends State<HomePage>
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  Future<Map<String, dynamic>> _loadOrCreateProfile(User user) async {
+    final profileResponse = await supabase
+        .from('profiles')
+        .select()
+        .eq('id', user.id)
+        .maybeSingle();
+
+    if (profileResponse != null) {
+      return Map<String, dynamic>.from(profileResponse);
+    }
+
+    logTechnicalError(
+      'HomePage._loadOrCreateProfile missing profile',
+      'Creating fallback profile for auth user ${user.id}',
+    );
+
+    final fallbackProfile = {
+      'id': user.id,
+      'first_name': '',
+      'last_name': '',
+      'email': user.email,
+      'role': 'volunteer',
+    };
+
+    try {
+      final createdProfile = await supabase
+          .from('profiles')
+          .upsert(fallbackProfile)
+          .select()
+          .single();
+
+      return Map<String, dynamic>.from(createdProfile);
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'HomePage._loadOrCreateProfile fallback create failed',
+        e,
+        stackTrace,
+      );
+
+      return fallbackProfile;
     }
   }
 
@@ -537,6 +599,67 @@ class _HomePageState extends State<HomePage>
     return 'Assigned';
   }
 
+  List<Map<String, dynamic>> _buildOpenSlotsByTeam(
+    List<Map<String, dynamic>> services,
+    Set<String> activeTeamIds,
+  ) {
+    final counts = <String, int>{
+      'Kids Class Schedule': 0,
+      'All Kids Choir': 0,
+      'All Main Choir': 0,
+    };
+
+    for (final service in services) {
+      final teamId = service['team_id']?.toString();
+
+      if (teamId == null || !activeTeamIds.contains(teamId)) {
+        continue;
+      }
+
+      final team = service['teams'];
+      final teamName = team is Map<String, dynamic>
+          ? team['name']?.toString() ?? ''
+          : '';
+      final groupName = _dashboardTeamGroupName(teamName);
+
+      if (groupName == null) {
+        continue;
+      }
+
+      final slots = List<Map<String, dynamic>>.from(
+        service['service_slots'] ?? const [],
+      );
+      final openSlotCount = slots.where((slot) {
+        final status = slot['slot_status']?.toString().trim().toLowerCase();
+        return status == 'open';
+      }).length;
+
+      counts[groupName] = (counts[groupName] ?? 0) + openSlotCount;
+    }
+
+    return counts.entries
+        .map(
+          (entry) => {'team_name': entry.key, 'open_slot_count': entry.value},
+        )
+        .toList();
+  }
+
+  String? _dashboardTeamGroupName(String teamName) {
+    if (_kidsClassTeamNames.contains(teamName)) {
+      return 'Kids Class Schedule';
+    }
+
+    if (teamName == 'All Kids Choir Volunteers') {
+      return 'All Kids Choir';
+    }
+
+    if (teamName == 'All Main Choir Volunteers') {
+      return 'All Main Choir';
+    }
+
+    return null;
+  }
+
   Widget _buildHeroCard(String firstName, {required bool isAdmin}) {
     final displayName = isAdmin
         ? '${_titleCaseName(firstName)} (Admin)'
@@ -546,7 +669,6 @@ class _HomePageState extends State<HomePage>
         : 'Welcome back to Kids Ministry Scheduler';
     final stats = isAdmin
         ? [
-            _buildHeroStat('Open Slots', _openSlotsCount),
             _buildHeroStat('Pending', _pendingAssignmentsCount),
             _buildHeroStat('Unread', _unreadNotificationCount),
           ]
@@ -606,8 +728,72 @@ class _HomePageState extends State<HomePage>
             ),
           ),
           const SizedBox(height: 12),
+          if (isAdmin) ...[
+            _buildOpenSlotsBreakdownCard(),
+            const SizedBox(height: 8),
+          ],
           Wrap(spacing: 8, runSpacing: 8, children: stats),
         ],
+      ),
+    );
+  }
+
+  Widget _buildOpenSlotsBreakdownCard() {
+    return Material(
+      color: Colors.white.withValues(alpha: .15),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          _openPage(const AdminDashboardPage());
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Open Slots This Month',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: .9),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              ..._openSlotsByTeam.map((team) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          team['team_name']?.toString() ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: .82),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${team['open_slot_count'] ?? 0}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -681,6 +867,12 @@ class _HomePageState extends State<HomePage>
         icon: Icons.event_available,
         color: Colors.green,
         page: const MyAvailabilityPage(),
+      ),
+      _HomeAction(
+        label: 'Coverage',
+        icon: Icons.volunteer_activism,
+        color: Colors.purple,
+        page: const CoverageRequestsPage(),
       ),
     ];
 

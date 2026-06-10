@@ -25,7 +25,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   List<Map<String, dynamic>> _ministries = [];
   List<Map<String, dynamic>> _upcomingServices = [];
   List<Map<String, dynamic>> _pendingAssignments = [];
-  int _openSlotCount = 0;
+  List<Map<String, dynamic>> _openSlotsByTeam = [];
+  int _openCoverageRequestCount = 0;
+  int _activeVolunteerCount = 0;
   int _pendingAssignmentCount = 0;
   int _fullyStaffedServiceCount = 0;
   int _servicesNeedingAttentionCount = 0;
@@ -59,7 +61,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return;
       }
 
-      final today = DateTime.now().toIso8601String().split('T').first;
+      final now = DateTime.now();
+      final today = now.toIso8601String().split('T').first;
+      final currentMonthStart = DateTime(
+        now.year,
+        now.month,
+        1,
+      ).toIso8601String().split('T').first;
+      final currentMonthEnd = DateTime(
+        now.year,
+        now.month + 1,
+        0,
+      ).toIso8601String().split('T').first;
       final ministriesResponse = await supabase
           .from('ministries')
           .select('id, name')
@@ -91,6 +104,21 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           .gte('service_date', today)
           .order('service_date')
           .order('start_time');
+      final currentMonthServicesResponse = await supabase
+          .from('service_instances')
+          .select('''
+            id,
+            teams (
+              id,
+              name
+            ),
+            service_slots (
+              id,
+              slot_status
+            )
+          ''')
+          .gte('service_date', currentMonthStart)
+          .lte('service_date', currentMonthEnd);
       final pendingResponse = await supabase
           .from('service_slots')
           .select('''
@@ -118,10 +146,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           .gte('service_instances.service_date', today)
           .order('service_instances(service_date)')
           .limit(20);
+      final coverageRequestsResponse = await supabase
+          .from('coverage_requests')
+          .select('id')
+          .eq('status', 'open');
+      final activeVolunteersResponse = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('role', 'volunteer')
+          .neq('status', 'inactive');
 
       final services = List<Map<String, dynamic>>.from(servicesResponse);
       final upcomingServices = <Map<String, dynamic>>[];
-      var openSlotCount = 0;
       var pendingAssignmentCount = 0;
       var fullyStaffedServiceCount = 0;
       var servicesNeedingAttentionCount = 0;
@@ -145,7 +181,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         final fullyStaffed =
             openSlots == 0 && pendingSlots == 0 && takenSlots > 0;
 
-        openSlotCount += openSlots;
         pendingAssignmentCount += pendingSlots;
 
         if (fullyStaffed) {
@@ -163,6 +198,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           'taken_slot_count': takenSlots,
         });
       }
+      final openSlotsByTeam = _buildOpenSlotsByTeam(
+        List<Map<String, dynamic>>.from(currentMonthServicesResponse),
+      );
 
       setState(() {
         _isAdmin = true;
@@ -174,7 +212,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _ministries = List<Map<String, dynamic>>.from(ministriesResponse);
         _upcomingServices = upcomingServices;
         _pendingAssignments = List<Map<String, dynamic>>.from(pendingResponse);
-        _openSlotCount = openSlotCount;
+        _openSlotsByTeam = openSlotsByTeam;
+        _openCoverageRequestCount = List<Map<String, dynamic>>.from(
+          coverageRequestsResponse,
+        ).length;
+        _activeVolunteerCount = List<Map<String, dynamic>>.from(
+          activeVolunteersResponse,
+        ).length;
         _pendingAssignmentCount = pendingAssignmentCount;
         _fullyStaffedServiceCount = fullyStaffedServiceCount;
         _servicesNeedingAttentionCount = servicesNeedingAttentionCount;
@@ -320,14 +364,72 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return 'Unknown User';
   }
 
+  List<Map<String, dynamic>> _buildOpenSlotsByTeam(
+    List<Map<String, dynamic>> services,
+  ) {
+    final counts = <String, int>{
+      'Kids Class Schedule': 0,
+      'All Kids Choir Volunteers': 0,
+      'All Main Choir Volunteers': 0,
+    };
+
+    for (final service in services) {
+      final team = service['teams'];
+      final teamName = team is Map<String, dynamic>
+          ? team['name']?.toString() ?? ''
+          : '';
+      final groupName = _dashboardTeamGroupName(teamName);
+
+      if (groupName == null) {
+        continue;
+      }
+
+      final slots = List<Map<String, dynamic>>.from(
+        service['service_slots'] ?? const [],
+      );
+      final openSlotCount = slots.where((slot) {
+        final status = slot['slot_status']?.toString().trim().toLowerCase();
+        return status == 'open';
+      }).length;
+
+      counts[groupName] = (counts[groupName] ?? 0) + openSlotCount;
+    }
+
+    return counts.entries
+        .map(
+          (entry) => {'team_name': entry.key, 'open_slot_count': entry.value},
+        )
+        .toList();
+  }
+
+  String? _dashboardTeamGroupName(String teamName) {
+    const classroomTeams = {
+      'Nursery',
+      'Kindies',
+      '2 Year Olds',
+      '3 Year Olds',
+      '4 Year Olds',
+      '1st Grade',
+      '2nd Grade',
+      '3rd Grade',
+      '4th Grade',
+      '5th Grade',
+    };
+
+    if (classroomTeams.contains(teamName)) {
+      return 'Kids Class Schedule';
+    }
+
+    if (teamName == 'All Kids Choir Volunteers' ||
+        teamName == 'All Main Choir Volunteers') {
+      return teamName;
+    }
+
+    return null;
+  }
+
   Widget _buildSummaryGrid() {
     final cards = [
-      _SummaryCard(
-        label: 'Open Slots',
-        value: _openSlotCount,
-        icon: Icons.event_busy,
-        color: Colors.amber,
-      ),
       _SummaryCard(
         label: 'Pending Assignments',
         value: _pendingAssignmentCount,
@@ -346,6 +448,18 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         icon: Icons.priority_high,
         color: Colors.red,
       ),
+      _SummaryCard(
+        label: 'Open Coverage Requests',
+        value: _openCoverageRequestCount,
+        icon: Icons.volunteer_activism,
+        color: Colors.purple,
+      ),
+      _SummaryCard(
+        label: 'Active Volunteers',
+        value: _activeVolunteerCount,
+        icon: Icons.people,
+        color: Colors.teal,
+      ),
     ];
 
     return LayoutBuilder(
@@ -362,6 +476,60 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           children: cards,
         );
       },
+    );
+  }
+
+  Widget _buildOpenSlotsByTeamCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: Colors.amber.shade100,
+                  foregroundColor: Colors.amber.shade900,
+                  child: const Icon(Icons.event_busy),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Open Slots This Month',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            ..._openSlotsByTeam.map((team) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 7),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        team['team_name']?.toString() ?? '',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Text(
+                      '${team['open_slot_count'] ?? 0}',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: Colors.amber.shade900,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
     );
   }
 
@@ -588,6 +756,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
               const SizedBox(height: 20),
               _buildSummaryGrid(),
+              const SizedBox(height: 16),
+              _buildOpenSlotsByTeamCard(),
               const SizedBox(height: 24),
               Text('Quick Actions', style: sectionHeaderTextStyle(context)),
               const SizedBox(height: 12),
