@@ -1,186 +1,159 @@
-# Choir Scheduler Project Architecture
+# Project Architecture
 
 ## App Purpose
 
-Choir Scheduler is a Flutter application for organizing volunteer service coverage across church ministries. It lets authenticated users view ministry schedules, claim open service slots, unclaim their own assignments, respond to pending admin assignments, and mark themselves unavailable for upcoming services.
+Choir Scheduler is a Flutter and Supabase application for coordinating church ministry service coverage. It helps volunteers and administrators manage service instances, open role slots, personal assignments, pending assignments, and service availability.
 
-The app currently supports multiple ministries, including Main Choir, Kids Choir, and Children's Ministry scheduling. It is designed to preserve separation between ministries while still preventing volunteers from being double-booked across overlapping service times.
+The app currently supports multiple ministry areas, including Main Choir, Kids Choir, and Children's Ministry scheduling. Ministry and team filtering are central to the workflow so each ministry can maintain its own schedule while still supporting conflict awareness across a user's assignments.
 
 ## Flutter Architecture
 
-The app is a small, page-oriented Flutter application using Material widgets and direct Supabase calls from each page.
+The app uses a simple page-based Flutter structure:
 
-- `lib/main.dart` initializes Flutter bindings, loads `.env`, initializes Supabase with `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then starts `MyApp`.
-- `lib/app.dart` defines the shared Supabase client, the root `MaterialApp`, and `AuthGate`.
-- `lib/pages/` contains the app screens. Each screen owns its own state, loading flags, error message handling, Supabase queries, and navigation.
-- Navigation is imperative with `Navigator.push`, `pushReplacement`, and `pushAndRemoveUntil`.
-- State management is local `StatefulWidget` state with `setState`; there is no global state management package.
-- Supabase is accessed through `Supabase.instance.client` in each page file.
-- UI layout uses standard Flutter widgets such as `Scaffold`, `AppBar`, `Padding`, `Column`, `Wrap`, `ListView`, `Card`, `ListTile`, dialogs, switches, and form fields.
+- `lib/main.dart` bootstraps Flutter, loads `.env`, initializes Supabase, and runs `MyApp`.
+- `lib/app.dart` defines the root `MaterialApp`, the shared Supabase client reference, and `AuthGate`.
+- `lib/pages/` contains the user-facing screens.
+- Pages are implemented mostly as `StatefulWidget` classes with local state managed by `setState`.
+- Navigation uses Flutter's imperative `Navigator` API with `MaterialPageRoute`.
+- Data access is performed directly from page widgets using `Supabase.instance.client`.
+- UI is built with Material components such as `Scaffold`, `AppBar`, `ListView`, `Card`, `ListTile`, dialogs, buttons, switches, and form fields.
 
-Dependencies currently declared in `pubspec.yaml` include:
+Primary dependencies:
 
-- `supabase_flutter` for authentication and database access.
-- `flutter_dotenv` for loading Supabase environment variables.
-- `intl` through transitive/imported usage for time formatting.
-- `table_calendar`, which appears in dependencies and backup code but is not used by the current primary page files.
+- `supabase_flutter` for Supabase auth, database queries, updates, deletes, inserts, and RPC calls.
+- `flutter_dotenv` for reading Supabase configuration from `.env`.
+- `table_calendar` is declared in `pubspec.yaml`, though the current active page files do not appear to use it.
+- `intl` is imported by schedule pages for time formatting.
 
 ## Page Hierarchy
 
 ```text
 main.dart
-└── MyApp
-    └── AuthGate
-        ├── AuthPage
-        │   ├── LoginPage
-        │   └── SignUpPage
-        └── HomePage
-            ├── MonthlySchedulePage
-            │   └── ServiceSlotsPage
-            ├── MySchedulePage
-            ├── PendingAssignmentsPage
-            ├── MyAvailabilityPage
-            └── TeamsPage
-                └── ServiceInstancesPage
-                    └── ServiceSlotsPage
+`-- MyApp
+    `-- AuthGate
+        |-- AuthPage
+        |   |-- LoginPage
+        |   `-- SignUpPage
+        `-- HomePage
+            |-- MonthlySchedulePage
+            |   `-- ServiceSlotsPage
+            |-- MySchedulePage
+            |-- PendingAssignmentsPage
+            |-- MyAvailabilityPage
+            `-- TeamsPage
+                `-- ServiceInstancesPage
+                    `-- ServiceSlotsPage
 ```
-
-### Auth Pages
-
-- `AuthPage` toggles between login and signup modes.
-- `LoginPage` signs users in with email and password, then navigates to `HomePage`.
-- `SignUpPage` creates a Supabase auth user with email and password and shows a success/error message.
-- `AuthGate` checks `supabase.auth.currentSession` at startup and routes authenticated users to `HomePage`.
-
-### Home And Navigation
-
-- `HomePage` loads the current user's profile from `profiles`.
-- `HomePage` loads ministries from `ministries`, ordered by `display_order`.
-- It displays quick links for monthly schedule, personal schedule, assignments, and availability.
-- It lists ministries and routes into the ministry-specific team and service hierarchy.
-
-### Ministry Drilldown
-
-- `TeamsPage` lists teams filtered by `ministry_id`.
-- `ServiceInstancesPage` lists service instances filtered by both `ministry_id` and `team_id`.
-- `ServiceSlotsPage` lists slots for a selected service instance.
-
-### Schedule And Availability Pages
-
-- `MonthlySchedulePage` lists current-month service instances across ministries.
-- `MySchedulePage` lists taken slots assigned to the current user and flags overlapping assignments.
-- `PendingAssignmentsPage` lists pending admin assignments for the current user.
-- `MyAvailabilityPage` lists upcoming services and lets the current user toggle unavailable/available status per service.
 
 ## Authentication Flow
 
-1. App startup loads `.env` and initializes Supabase.
-2. `AuthGate` checks `supabase.auth.currentSession`.
-3. If a session exists, the user goes to `HomePage`.
-4. If no session exists, the user goes to `AuthPage`.
-5. `AuthPage` shows `LoginPage` by default and can toggle to `SignUpPage`.
-6. `LoginPage` calls `supabase.auth.signInWithPassword`.
-7. On successful login, the app replaces the auth route with `HomePage`.
-8. `HomePage` loads the authenticated user's profile from `profiles`.
-9. Logout calls `supabase.auth.signOut` and clears navigation back to `AuthPage`.
+1. `main.dart` loads environment variables from `.env`.
+2. Supabase is initialized with `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+3. `AuthGate` checks `supabase.auth.currentSession`.
+4. Authenticated users are routed to `HomePage`.
+5. Unauthenticated users are routed to `AuthPage`.
+6. `AuthPage` toggles between `LoginPage` and `SignUpPage`.
+7. `LoginPage` calls `supabase.auth.signInWithPassword`.
+8. On successful login, the user is sent to `HomePage`.
+9. `SignUpPage` calls `supabase.auth.signUp`.
+10. `HomePage` loads the user's profile from `profiles`.
+11. Logout calls `supabase.auth.signOut` and returns the app to `AuthPage`.
 
-The current authentication flow depends on Supabase Auth for identity and the `profiles` table for application-level metadata such as first name and role.
+The app uses Supabase Auth for session identity and the `profiles` table for app-specific user data such as name and role.
 
 ## Scheduling Workflow
 
-### Volunteer Claim Flow
+### Ministry Browsing
 
-1. A user opens a service through either the ministry drilldown or monthly schedule.
-2. `ServiceSlotsPage` loads slots from `service_slots` for the selected `service_instance_id`.
-3. Open slots display as available.
-4. Non-admin users tap an open slot to claim it.
-5. The app updates the slot:
-   - `slot_status` becomes `taken`.
-   - `assigned_user_id` becomes the current user id.
-   - `color_code` becomes `green`.
-6. The page reloads slots and shows a success message.
+1. `HomePage` loads ministries from `ministries`, ordered by `display_order`.
+2. Selecting a ministry opens `TeamsPage`.
+3. `TeamsPage` loads teams filtered by `ministry_id`.
+4. Selecting a team opens `ServiceInstancesPage`.
+5. `ServiceInstancesPage` loads service instances filtered by `ministry_id` and `team_id`.
+6. Selecting a service opens `ServiceSlotsPage`.
 
-The code expects database-level conflict prevention. It specifically handles a PostgREST error containing `ux_service_slots_one_user_per_service` and shows "You already claimed another slot for this service."
+### Monthly Schedule
 
-### Volunteer Unclaim Flow
+`MonthlySchedulePage` loads all service instances for the current month. It includes nested slot and availability data, then displays counts for open, pending, taken, available, and unavailable coverage.
 
-1. A user taps their own taken slot from `ServiceSlotsPage` or `MySchedulePage`.
-2. The app updates the slot:
-   - `slot_status` becomes `open`.
-   - `assigned_user_id` becomes `null`.
-   - `color_code` becomes `amber`.
-3. The current list reloads.
+Admin users can create a service from this page. The flow inserts a `service_instances` row and calls the Supabase RPC function `generate_slots_from_team_roles` to create service slots.
 
-### Admin Assignment Flow
+### Slot Claiming
 
-1. Admin status is determined by loading the current user's `profiles.role`.
-2. Admins tapping an open slot on `ServiceSlotsPage` see a user selection dialog.
-3. Assignable users are loaded from `profiles`.
-4. The selected user is assigned with:
-   - `slot_status` set to `pending`.
-   - `assigned_user_id` set to the selected profile id.
-   - `color_code` set to `blue`.
-5. The assigned volunteer sees the item on `PendingAssignmentsPage`.
-6. Accepting changes the slot to `taken`; declining changes the slot back to `open`.
+On `ServiceSlotsPage`, users can claim open slots.
 
-### Monthly Service Creation Flow
+When a volunteer claims a slot, the app updates `service_slots`:
 
-1. Admin users see an add button on `MonthlySchedulePage`.
-2. The create dialog loads allowed teams by name:
-   - `All Main Choir Volunteers`
-   - `All Kids Choir Volunteers`
-   - `Children's Ministry Live Schedule`
-3. Admin selects team, service type, date, start time, end time, and location.
-4. The app inserts a row into `service_instances`.
-5. The app calls the Supabase RPC function `generate_slots_from_team_roles` with the new service instance id.
-6. The monthly schedule reloads.
+- `slot_status` becomes `taken`.
+- `assigned_user_id` becomes the current user's id.
+- `color_code` becomes `green`.
 
-### Availability Flow
+The app catches Supabase/PostgREST errors and specifically recognizes the database constraint name `ux_service_slots_one_user_per_service`, which implies database-level protection against claiming multiple slots for the same service.
 
-1. `MyAvailabilityPage` loads upcoming services and nested `service_availability` rows.
-2. A user toggles a switch on a service.
-3. If an availability row already exists for the current user and service, it is deleted.
-4. If none exists, a row is inserted with `availability_status = unavailable`.
-5. The local list is updated so the UI reflects the new availability state.
+### Slot Unclaiming
 
-### Conflict Visibility
+Users can unclaim their own slots from `ServiceSlotsPage` or `MySchedulePage`.
 
-`MySchedulePage` detects schedule conflicts client-side by comparing the current user's taken assignments. A conflict is shown when two assigned service instances:
+When a slot is unclaimed, the app updates `service_slots`:
 
-- Are on the same `service_date`.
-- Have different service instance ids.
-- Have overlapping `start_time` and `end_time` values.
+- `slot_status` becomes `open`.
+- `assigned_user_id` becomes `null`.
+- `color_code` becomes `amber`.
 
-Project requirements also call for conflict prevention between ministries. The app appears to rely on database constraints or RPC logic for hard prevention, while this page provides visible conflict detection for already assigned services.
+### Admin Assignment
+
+Admins are identified by reading `profiles.role` and checking for `admin`.
+
+On `ServiceSlotsPage`, admins can tap open slots and choose a user from `profiles`. The app then updates the selected slot:
+
+- `slot_status` becomes `pending`.
+- `assigned_user_id` becomes the selected user's id.
+- `color_code` becomes `blue`.
+
+Assigned users see pending items on `PendingAssignmentsPage`. Accepting the assignment marks the slot `taken`; declining it clears the assignment and returns the slot to `open`.
+
+### My Schedule
+
+`MySchedulePage` loads `service_slots` assigned to the current user with `slot_status = taken`. It displays service details and allows the user to unclaim a slot.
+
+This page also detects visible conflicts by comparing assigned services on the same date. A conflict is shown when two services overlap by start and end time.
+
+### Availability
+
+`MyAvailabilityPage` loads upcoming service instances with nested `service_availability` rows. A user can toggle their availability for each service.
+
+If a matching availability row exists, the app deletes it and treats the user as available. If no row exists, the app inserts a row with `availability_status = unavailable`.
 
 ## Current Features
 
-- Supabase email/password login.
-- Supabase email/password signup.
+- User login.
+- User signup.
 - Logout.
-- Profile-backed role detection.
-- Ministry listing.
-- Ministry-specific team listing.
-- Team-specific service instance listing.
-- Monthly schedule page for the current month.
-- Admin service creation from the monthly page.
-- Automatic slot generation through `generate_slots_from_team_roles`.
-- Slot claiming by volunteers.
-- Slot unclaiming by assigned volunteers.
-- Admin assignment of users to pending slots.
-- Pending assignment acceptance and decline.
+- Profile-based admin detection.
+- Ministry list.
+- Team list by ministry.
+- Service instance list by ministry and team.
+- Monthly schedule page.
+- Admin service creation.
+- Slot generation through Supabase RPC.
+- Volunteer slot claiming.
+- Volunteer slot unclaiming.
+- Admin assignment to pending slots.
+- Pending assignment accept/decline.
 - Personal schedule view.
-- Client-side conflict highlighting for overlapping assigned services.
-- Per-service availability toggling.
-- Children's Ministry scheduling support through the existing ministry/team data model and create-service team filter.
+- Client-side conflict highlighting for overlapping assignments.
+- Per-service availability tracking.
+- Children's Ministry scheduling through the existing ministry/team/service model.
 
 ## Database Assumptions
 
-The Flutter app assumes the following Supabase tables, columns, relationships, constraints, and functions exist.
+The app assumes an existing Supabase schema. No migrations are currently generated or executed by this document.
 
 ### `profiles`
 
-Expected columns:
+Expected purpose: application profile data for Supabase auth users.
+
+Expected fields used by the app:
 
 - `id`
 - `first_name`
@@ -188,33 +161,33 @@ Expected columns:
 - `email`
 - `role`
 
-Used for current user metadata, admin checks, display names, and admin assignment user selection.
-
 ### `ministries`
 
-Expected columns:
+Expected purpose: top-level ministry separation.
+
+Expected fields used by the app:
 
 - `id`
 - `name`
 - `description`
 - `display_order`
 
-Used to separate scheduling domains and drive the ministry list on `HomePage`.
-
 ### `teams`
 
-Expected columns:
+Expected purpose: ministry-specific volunteer or scheduling groups.
+
+Expected fields used by the app:
 
 - `id`
 - `ministry_id`
 - `name`
 - `description`
 
-Used to group volunteers and service instances within a ministry.
-
 ### `service_instances`
 
-Expected columns:
+Expected purpose: scheduled services, rehearsals, or special events.
+
+Expected fields used by the app:
 
 - `id`
 - `ministry_id`
@@ -226,11 +199,11 @@ Expected columns:
 - `location`
 - `status`
 
-Used as the scheduled service/rehearsal/event record.
-
 ### `service_slots`
 
-Expected columns:
+Expected purpose: assignable positions for a service instance.
+
+Expected fields used by the app:
 
 - `id`
 - `service_instance_id`
@@ -240,34 +213,35 @@ Expected columns:
 - `assigned_user_id`
 - `color_code`
 
-Expected relationship:
-
-- `service_slots.assigned_user_id` references `profiles.id`, using the relationship name `service_slots_assigned_user_id_fkey`.
-
-Expected statuses:
+Expected status values:
 
 - `open`
 - `pending`
 - `taken`
 
-Expected database protection:
+Expected relationship:
 
-- A uniqueness or exclusion rule named or surfaced as `ux_service_slots_one_user_per_service` prevents a user from claiming more than one slot for the same service.
-- Additional database rules or RPC logic should prevent double-booking across overlapping ministries, per project requirements.
+- `assigned_user_id` references `profiles.id`.
+- The relationship is queried as `profiles!service_slots_assigned_user_id_fkey`.
+
+Expected protection:
+
+- A constraint or trigger surfaced as `ux_service_slots_one_user_per_service` prevents one user from claiming multiple slots in the same service.
+- The project requirements also require preventing double-booking between ministries, likely through database constraints, triggers, or RPC logic.
 
 ### `service_availability`
 
-Expected columns:
+Expected purpose: per-user availability by service instance.
+
+Expected fields used by the app:
 
 - `service_instance_id`
 - `user_id`
 - `availability_status`
 
-Expected status:
+Expected status value:
 
 - `unavailable`
-
-Used to track volunteer availability per service instance.
 
 ### RPC Functions
 
@@ -275,32 +249,35 @@ Expected function:
 
 - `generate_slots_from_team_roles(p_service_instance_id)`
 
-This function is called after creating a service instance and is expected to create the service slots for that instance based on team roles.
+The app calls this after creating a service instance. It is expected to create the initial set of `service_slots` for that service.
 
 ## Supabase Integration
 
-Supabase is used for:
+Supabase is integrated directly into the Flutter pages.
 
-- Auth session detection.
-- Email/password sign in.
-- Email/password sign up.
-- Sign out.
-- CRUD operations through PostgREST.
-- Nested relational selects for service data, slots, profiles, teams, and availability.
-- RPC invocation for slot generation.
+Used capabilities:
 
-The app reads Supabase configuration from `.env`:
+- Auth session lookup.
+- Email/password login.
+- Email/password signup.
+- Logout.
+- Table selects.
+- Nested relational selects.
+- Inserts.
+- Updates.
+- Deletes.
+- RPC calls.
+
+Configuration is loaded from `.env`:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
-No SQL migrations are present in the current repository. Per project rules, future database changes should be delivered as SQL migration scripts and should not be executed against production data by the app or by development workflow automation.
+The app does not modify Supabase production data as part of local documentation work. Future database changes should be written as SQL migration scripts and reviewed before execution.
 
 ## Future Roadmap
 
-### Multi-Position Service Slots
-
-The next planned feature is support for defined positions within each service:
+The next planned feature is multi-position service slots:
 
 - Worship Leader
 - Keyboardist
@@ -308,14 +285,13 @@ The next planned feature is support for defined positions within each service:
 - Backup Singer 2
 - Backup Singer 3
 
-The current `service_slots` model already has `slot_name` and `role_name`, so this roadmap likely fits the existing slot-based design. The safest path is to add or adjust database seed/migration logic and the `generate_slots_from_team_roles` function so new service instances produce the expected positions without disrupting existing claim, unclaim, admin assignment, and pending assignment flows.
+The current schema already has slot concepts through `service_slots.slot_name` and `service_slots.role_name`, so this feature should fit the existing architecture. The main work is likely to update database migrations, seed data, and the `generate_slots_from_team_roles` RPC function so new services consistently generate those positions.
 
-### Recommended Follow-Up Work
+Recommended future work:
 
-- Add migrations documenting the existing schema and constraints if they are not already tracked elsewhere.
-- Confirm hard database protection for cross-ministry double-booking.
-- Add tests for auth routing, slot status transitions, admin assignment, and conflict detection.
-- Consider centralizing Supabase data access once the feature surface grows.
-- Improve signup/profile creation if profiles are not created elsewhere by a trigger or admin process.
-- Add stronger responsive layout handling for wider screens and dense monthly schedules.
-- Extend the service slot generator to create the planned choir positions consistently across relevant teams.
+- Add tracked SQL migrations for the current schema if they are not stored elsewhere.
+- Confirm hard database-level prevention for cross-ministry double-booking.
+- Add tests around login routing, slot claiming, unclaiming, pending assignment responses, and conflict detection.
+- Consider moving Supabase access into a small service layer as the app grows.
+- Confirm how `profiles` rows are created after signup.
+- Improve responsive layouts for larger screens and dense monthly schedules.

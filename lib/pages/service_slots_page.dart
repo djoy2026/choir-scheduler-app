@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart';
+
+import '../utils/error_messages.dart';
+import '../utils/time_format.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -67,9 +69,13 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       setState(() {
         _slots = response;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._loadSlots failed', e, stackTrace);
       setState(() {
-        _message = 'Failed to load slots: $e';
+        _message = friendlyErrorMessage(
+          e,
+          fallback: 'Unable to load positions. Please try again.',
+        );
       });
     } finally {
       setState(() {
@@ -100,6 +106,27 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
     return fullName.isEmpty ? 'Unknown user' : fullName;
   }
 
+  String _roleName(Map<String, dynamic> slot) {
+    return slot['role_name']?.toString() ??
+        slot['slot_name']?.toString() ??
+        'Assignment';
+  }
+
+  Future<void> _createNotification({
+    required String userId,
+    required String title,
+    required String message,
+    required String notificationType,
+  }) async {
+    await supabase.from('notifications').insert({
+      'user_id': userId,
+      'title': title,
+      'message': message,
+      'notification_type': notificationType,
+      'related_service_instance_id': widget.serviceInstanceId,
+    });
+  }
+
   Future<void> _claimSlot(Map<String, dynamic> slot) async {
     try {
       final user = supabase.auth.currentUser;
@@ -124,39 +151,144 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Slot claimed successfully')),
       );
-    } on PostgrestException catch (e) {
+    } on PostgrestException catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._claimSlot failed', e, stackTrace);
       if (!mounted) return;
 
       final errorText = e.message.toLowerCase();
 
       String friendlyMessage = 'Database error occurred';
 
-      if (errorText.contains('ux_service_slots_one_user_per_service')) {
-        friendlyMessage = 'You already claimed another slot for this service.';
+      if (errorText.contains('ux_service_slots_one_user_per_service') ||
+          errorText.contains('constraint') ||
+          errorText.contains('duplicate')) {
+        friendlyMessage =
+            'You already have a position assigned or pending for this service.';
       }
 
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._claimSlot failed', e, stackTrace);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              e,
+              fallback: 'Unable to claim this position. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
   Future<void> _unclaimSlot(Map<String, dynamic> slot) async {
     try {
-      await supabase
+      final assignedUserId = slot['assigned_user_id']?.toString();
+      final slotId = slot['id'];
+
+      final updateResponse = await supabase
           .from('service_slots')
           .update({
             'slot_status': 'open',
             'assigned_user_id': null,
             'color_code': 'amber',
           })
-          .eq('id', slot['id']);
+          .eq('id', slotId)
+          .select('id, slot_status, assigned_user_id, color_code');
+      final updatedRows = List<Map<String, dynamic>>.from(updateResponse);
+
+      debugPrint(
+        'ServiceSlotsPage._unclaimSlot update response: $updateResponse',
+      );
+      debugPrint('ServiceSlotsPage._unclaimSlot returned rows: $updatedRows');
+
+      if (updatedRows.isEmpty) {
+        throw const PostgrestException(
+          message: 'Slot unclaim affected 0 rows.',
+          code: 'PGRST_ZERO_ROWS',
+          details: 'The service_slots update completed but returned no rows.',
+          hint: 'Verify RLS permits updating the selected service_slots row.',
+        );
+      }
+
+      final updatedSlot = updatedRows.first;
+
+      if (updatedSlot['slot_status'] != 'open' ||
+          updatedSlot['assigned_user_id'] != null ||
+          updatedSlot['color_code'] != 'amber') {
+        throw PostgrestException(
+          message: 'Slot unclaim verification failed.',
+          code: 'PGRST_VERIFY_FAILED',
+          details:
+              'Expected slot_status=open, assigned_user_id=null, color_code=amber. Got $updatedSlot.',
+          hint:
+              'The update returned a row, but the slot was not persisted as available.',
+        );
+      }
+
+      final verificationResponse = await supabase
+          .from('service_slots')
+          .select('id, slot_status, assigned_user_id, color_code')
+          .eq('id', slotId)
+          .maybeSingle();
+
+      debugPrint(
+        'ServiceSlotsPage._unclaimSlot verification query: '
+        '$verificationResponse',
+      );
+
+      if (verificationResponse == null ||
+          verificationResponse['slot_status'] != 'open' ||
+          verificationResponse['assigned_user_id'] != null ||
+          verificationResponse['color_code'] != 'amber') {
+        throw PostgrestException(
+          message: 'Slot unclaim verification query failed.',
+          code: 'PGRST_VERIFY_QUERY_FAILED',
+          details: 'Verification query returned $verificationResponse.',
+          hint: 'The database did not report the slot as open after unclaim.',
+        );
+      }
+
+      if (mounted) {
+        setState(() {
+          _slots = _slots.map((currentSlot) {
+            if (currentSlot is Map<String, dynamic> &&
+                currentSlot['id'] == slotId) {
+              return {
+                ...currentSlot,
+                'slot_status': 'open',
+                'assigned_user_id': null,
+                'color_code': 'amber',
+                'profiles': null,
+              };
+            }
+
+            return currentSlot;
+          }).toList();
+        });
+      }
+
+      if (assignedUserId != null && assignedUserId.isNotEmpty) {
+        try {
+          await _createNotification(
+            userId: assignedUserId,
+            title: 'Assignment Removed',
+            message: 'Your assignment was removed.',
+            notificationType: 'assignment_removed',
+          );
+        } catch (e, stackTrace) {
+          logTechnicalError(
+            'ServiceSlotsPage._unclaimSlot notification failed',
+            e,
+            stackTrace,
+          );
+        }
+      }
 
       await _loadSlots();
 
@@ -165,12 +297,15 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Slot unclaimed')));
-    } catch (e) {
+    } catch (e, stackTrace) {
+      logTechnicalError('ServiceSlotsPage._unclaimSlot failed', e, stackTrace);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to remove assignment. Please try again.'),
+        ),
+      );
     }
   }
 
@@ -181,6 +316,18 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
         .order('first_name');
 
     return List<Map<String, dynamic>>.from(response);
+  }
+
+  Future<bool> _isUserUnavailableForService(String userId) async {
+    final response = await supabase
+        .from('service_availability')
+        .select('id')
+        .eq('service_instance_id', widget.serviceInstanceId)
+        .eq('user_id', userId)
+        .eq('availability_status', 'unavailable')
+        .limit(1);
+
+    return response.isNotEmpty;
   }
 
   Future<void> _adminAssignSlot(Map<String, dynamic> slot) async {
@@ -216,6 +363,46 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
         return;
       }
 
+      final isUnavailable = await _isUserUnavailableForService(
+        selectedUser['id'],
+      );
+
+      if (isUnavailable) {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This volunteer marked themselves unavailable for this service.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final currentUser = supabase.auth.currentUser;
+      final isSelfAssignment = selectedUser['id'] == currentUser?.id;
+
+      if (isSelfAssignment) {
+        await supabase
+            .from('service_slots')
+            .update({
+              'slot_status': 'taken',
+              'assigned_user_id': currentUser!.id,
+              'color_code': 'green',
+            })
+            .eq('id', slot['id']);
+
+        await _loadSlots();
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Slot claimed.')));
+        return;
+      }
+
       await supabase
           .from('service_slots')
           .update({
@@ -225,19 +412,118 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
           })
           .eq('id', slot['id']);
 
+      await _createNotification(
+        userId: selectedUser['id'],
+        title: 'New Assignment',
+        message: 'You have been assigned to:\n${_roleName(slot)}',
+        notificationType: 'new_assignment',
+      );
+
       await _loadSlots();
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User assigned pending confirmation')),
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Assignment sent.')));
+    } on PostgrestException catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceSlotsPage._adminAssignSlot failed',
+        e,
+        stackTrace,
       );
-    } catch (e) {
+      if (!mounted) return;
+
+      final errorText = e.message.toLowerCase();
+      final friendlyMessage =
+          errorText.contains('ux_service_slots_one_user_per_service')
+          ? 'This volunteer is already assigned to another role in this service.'
+          : 'Unable to assign volunteer. Please try again.';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(friendlyMessage)));
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceSlotsPage._adminAssignSlot failed',
+        e,
+        stackTrace,
+      );
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to assign volunteer. Please try again.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _adminReleaseOwnSlot(Map<String, dynamic> slot) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Release this slot?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Release'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      final user = supabase.auth.currentUser;
+
+      if (user == null) {
+        throw Exception('User not logged in');
+      }
+
+      await supabase
+          .from('service_slots')
+          .update({
+            'slot_status': 'open',
+            'assigned_user_id': null,
+            'color_code': 'amber',
+          })
+          .eq('id', slot['id'])
+          .eq('assigned_user_id', user.id);
+
+      await _loadSlots();
+
       if (!mounted) return;
 
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ).showSnackBar(const SnackBar(content: Text('Slot released.')));
+    } catch (e, stackTrace) {
+      logTechnicalError(
+        'ServiceSlotsPage._adminReleaseOwnSlot failed',
+        e,
+        stackTrace,
+      );
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to release slot. Please try again.'),
+        ),
+      );
     }
   }
 
@@ -277,19 +563,32 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
     return 'Taken by ${_claimedByName(slot)}';
   }
 
+  String _formatServiceTitle(String title) {
+    final formattedTitle = title.replaceAllMapped(
+      RegExp(r'(\d{2}):(\d{2}):\d{2}'),
+      (match) {
+        return formatTime(match.group(0));
+      },
+    );
+
+    final withoutSuffix = removeServiceSuffix(formattedTitle).trim();
+
+    if (withoutSuffix.startsWith('Service ')) {
+      return withoutSuffix.replaceFirst('Service ', '');
+    }
+
+    return withoutSuffix;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.serviceTitle.replaceAllMapped(
-            RegExp(r'(\d{2}):(\d{2}):\d{2}'),
-            (match) {
-              final parsed = DateFormat('HH:mm:ss').parse(match.group(0)!);
-
-              return DateFormat('h:mm a').format(parsed);
-            },
-          ),
+          _formatServiceTitle(widget.serviceTitle),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          softWrap: true,
         ),
       ),
       body: Padding(
@@ -343,7 +642,9 @@ class _ServiceSlotsPageState extends State<ServiceSlotsPage> {
                                       ? () => _adminAssignSlot(slot)
                                       : () => _claimSlot(slot)
                                 : isMine
-                                ? () => _unclaimSlot(slot)
+                                ? _isAdmin
+                                      ? () => _adminReleaseOwnSlot(slot)
+                                      : () => _unclaimSlot(slot)
                                 : null,
                           ),
                         );

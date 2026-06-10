@@ -5,14 +5,23 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    debugPrint('APP_START');
 
-  await dotenv.load(fileName: '.env');
+    WidgetsFlutterBinding.ensureInitialized();
 
-  await Supabase.initialize(
-    url: dotenv.env['SUPABASE_URL']!,
-    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
-  );
+    await dotenv.load(fileName: '.env');
 
-  runApp(const MyApp());
+    await Supabase.initialize(
+      url: dotenv.env['SUPABASE_URL']!,
+      anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+    );
+    debugPrint('SUPABASE_INIT_COMPLETE');
+
+    runApp(const MyApp());
+  } catch (error, stackTrace) {
+    debugPrint('APP_STARTUP_EXCEPTION: $error');
+    debugPrintStack(stackTrace: stackTrace);
+    rethrow;
+  }
 }

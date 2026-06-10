@@ -21,6 +21,7 @@ class _AuthPageState extends State<AuthPage> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('ROUTE_LOGIN');
     return _showLogin
         ? LoginPage(onSwitchToSignUp: _toggleMode)
         : SignUpPage(onSwitchToLogin: _toggleMode);
